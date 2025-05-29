@@ -1,0 +1,434 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/user_profile_model.dart';
+import '../models/finance_models.dart';
+import 'profile_service.dart';
+import 'finance_service.dart';
+
+// Challenge model
+class Challenge {
+  final String id;
+  final String title;
+  final String description;
+  final String type;
+  final int rewardCoins;
+  final int rewardPoints;
+  final int targetValue;
+  int currentValue;
+  bool isCompleted;
+
+  Challenge({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.type,
+    required this.rewardCoins,
+    required this.rewardPoints,
+    required this.targetValue,
+    required this.currentValue,
+    required this.isCompleted,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'description': description,
+      'type': type,
+      'rewardCoins': rewardCoins,
+      'rewardPoints': rewardPoints,
+      'targetValue': targetValue,
+      'currentValue': currentValue,
+      'isCompleted': isCompleted,
+    };
+  }
+
+  factory Challenge.fromJson(Map<String, dynamic> json) {
+    return Challenge(
+      id: json['id'],
+      title: json['title'],
+      description: json['description'],
+      type: json['type'],
+      rewardCoins: json['rewardCoins'],
+      rewardPoints: json['rewardPoints'],
+      targetValue: json['targetValue'],
+      currentValue: json['currentValue'],
+      isCompleted: json['isCompleted'],
+    );
+  }
+
+  double get progress =>
+      targetValue > 0 ? (currentValue / targetValue).clamp(0.0, 1.0) : 0.0;
+}
+
+// Quest model (a series of related challenges)
+class Quest {
+  final String id;
+  final String title;
+  final String description;
+  final List<Challenge> challenges;
+  final int rewardCoins;
+  final int rewardPoints;
+
+  Quest({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.challenges,
+    required this.rewardCoins,
+    required this.rewardPoints,
+  });
+
+  bool get isCompleted =>
+      challenges.every((challenge) => challenge.isCompleted);
+
+  double get progress {
+    if (challenges.isEmpty) return 0.0;
+
+    final totalCompleted = challenges.where((c) => c.isCompleted).length;
+    return totalCompleted / challenges.length;
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'description': description,
+      'challenges': challenges.map((c) => c.toJson()).toList(),
+      'rewardCoins': rewardCoins,
+      'rewardPoints': rewardPoints,
+    };
+  }
+
+  factory Quest.fromJson(Map<String, dynamic> json) {
+    return Quest(
+      id: json['id'],
+      title: json['title'],
+      description: json['description'],
+      challenges:
+          (json['challenges'] as List)
+              .map((c) => Challenge.fromJson(c))
+              .toList(),
+      rewardCoins: json['rewardCoins'],
+      rewardPoints: json['rewardPoints'],
+    );
+  }
+}
+
+class EnhancedGamificationService extends ChangeNotifier {
+  // Keys for SharedPreferences
+  static const String _gamificationKey = 'gamification_data';
+  static const String _dailyChallengesKey = 'daily_challenges';
+  static const String _streakKey = 'activity_streak';
+  static const String _lastActivityKey = 'last_activity_date';
+  static const String _xpKey = 'gamification_xp';
+  static const String _levelKey = 'gamification_level';
+  static const String _trophiesKey = 'gamification_trophies';
+  static const String _badgesKey = 'user_badges';
+  static const String _questsKey = 'gamification_quests';
+  static const String _insightsKey = 'financial_insights';
+  static const String _tipsKey = 'personalized_tips';
+
+  final ProfileService _profileService;
+  final FinanceService _financeService;
+
+  // Challenges
+  List<Challenge> _dailyChallenges = [];
+  List<Quest> _quests = [];
+
+  // Streaks
+  int _currentStreak = 0;
+  int _longestStreak = 0;
+  DateTime? _lastActivityDate;
+  // Rewards
+  int _financeCoins = 0;
+
+  // XP and Level System
+  int _currentXP = 0;
+  int _currentLevel = 1;
+  List<String> _userBadges = [];
+
+  // Gamification elements
+  List<Trophy> _availableTrophies = [];
+
+  // AI Insights
+  Map<String, dynamic> _financialInsights = {};
+  List<String> _personalizedTips = [];
+
+  // Flag to indicate if initial data has been loaded
+  bool _isInitialized = false;
+
+  // Constructor
+  EnhancedGamificationService(this._profileService, this._financeService) {
+    _initialize();
+  }
+
+  // Getters
+  List<Challenge> get dailyChallenges => _dailyChallenges;
+  // Weekly challenges are not implemented yet
+  List<Challenge> get weeklyChallenges => [];
+  List<Quest> get activeQuests => _quests;
+  int get currentStreak => _currentStreak;
+  int get longestStreak => _longestStreak;
+  int get financeCoins => _financeCoins;
+  int get currentXP => _currentXP;
+  int get currentLevel => _currentLevel;
+  List<Trophy> get availableTrophies => _availableTrophies;
+  List<String> get userBadges => _userBadges;
+  Map<String, dynamic> get financialInsights => _financialInsights;
+  List<String> get personalizedTips => _personalizedTips;
+
+  // XP required for each level
+  int getXPForNextLevel(int level) {
+    // Progressive XP requirements: each level requires more XP than the previous
+    return 100 * level * (level + 1) ~/ 2;
+  }
+
+  // Calculate level progress percentage
+  double getLevelProgress() {
+    final currentLevelXP = getXPForNextLevel(_currentLevel - 1);
+    final nextLevelXP = getXPForNextLevel(_currentLevel);
+    final xpForCurrentLevel = _currentXP - currentLevelXP;
+    final xpRequiredForNextLevel = nextLevelXP - currentLevelXP;
+
+    return (xpForCurrentLevel / xpRequiredForNextLevel).clamp(0.0, 1.0);
+  }
+
+  // Get XP needed for next level
+  int getXPNeededForNextLevel() {
+    final nextLevelXP = getXPForNextLevel(_currentLevel);
+    return nextLevelXP - _currentXP;
+  }
+
+  // Show notification (helper method used throughout the service)
+  void _showNotification(String title, String message) {
+    // This will be implemented to show in-app notifications
+    debugPrint('NOTIFICATION: $title - $message');
+
+    // In a real implementation, this would show a proper notification
+    // or connect to a notification service
+  }
+
+  // Initialize the service
+  Future<void> _initialize() async {
+    // Reset all data to 0 first
+    _resetAllData();
+
+    // Then try to load any saved data
+    await _loadGamificationData();
+
+    // Generate initial challenges if none exist
+    if (_dailyChallenges.isEmpty) {
+      _generateDailyChallenges();
+    }
+
+    // Initialize trophies if none exist
+    if (_availableTrophies.isEmpty) {
+      _initializeDefaultTrophies();
+    }
+
+    // Sync with profile service
+    _syncWithProfileService();
+
+    // Mark as initialized
+    _isInitialized = true;
+    notifyListeners();
+
+    // Set up a timer to check for updates every hour
+    Timer.periodic(const Duration(hours: 1), (_) async {
+      await _checkAndUpdateStreak();
+      await _checkAndGenerateDailyChallenges();
+      await _checkAchievements();
+      await _refreshFinancialInsights();
+      notifyListeners();
+    });
+  }
+
+  // Reset all data to initial values
+  void _resetAllData() {
+    // Reset streaks
+    _currentStreak = 0;
+    _longestStreak = 0;
+    _lastActivityDate = null;
+
+    // Reset rewards
+    _financeCoins = 0;
+
+    // Reset XP and level
+    _currentXP = 0;
+    _currentLevel = 1;
+
+    // Reset badges
+    _userBadges = [];
+
+    // Initialize default trophies
+    _initializeDefaultTrophies();
+
+    // Reset challenges
+    _dailyChallenges.clear();
+    _quests.clear();
+
+    // Reset AI features
+    _financialInsights = {};
+    _personalizedTips = [];
+  }
+
+  // Sync with profile service
+  void _syncWithProfileService() {
+    final profile = _profileService.currentProfile;
+
+    // Update XP and level in profile
+    final updatedProfile = profile.copyWith(
+      xp: _currentXP,
+      level: _currentLevel,
+      levelProgress: getLevelProgress(),
+      trophies: _availableTrophies.where((t) => t.isUnlocked).toList(),
+      badges: _userBadges,
+    );
+
+    _profileService.updateUserProfile(updatedProfile);
+  }
+
+  // Check achievements based on app data
+  Future<bool> _checkAchievements() async {
+    final finances = _financeService;
+    bool achievementsUpdated = false;
+
+    // Check savings-related achievements
+    final totalSavings = finances.savingsGoals.fold<double>(
+      0,
+      (sum, goal) => sum + goal.currentAmount,
+    );
+
+    // Savings Hero trophy (₹25,000 saved)
+    if (totalSavings >= 25000) {
+      achievementsUpdated =
+          await unlockTrophy('trophy_savings_hero') || achievementsUpdated;
+    }
+
+    // Check investment-related achievements
+    // Check if user has any investment-related transactions
+    bool hasInvestments = false;
+    for (final transaction in finances.transactions) {
+      if (transaction.category == TransactionCategory.investment) {
+        hasInvestments = true;
+        break;
+      }
+    }
+
+    if (hasInvestments) {
+      achievementsUpdated =
+          await unlockTrophy('trophy_investment_guru') || achievementsUpdated;
+    }
+
+    // Check savings goals achievements
+    final completedGoals =
+        finances.savingsGoals
+            .where((goal) => goal.currentAmount >= goal.targetAmount)
+            .length;
+
+    if (completedGoals >= 5) {
+      achievementsUpdated =
+          await unlockTrophy('trophy_financial_planner') || achievementsUpdated;
+    }
+
+    // Check streak achievements
+    final streakResult = await _checkStreakTrophies();
+    achievementsUpdated = streakResult || achievementsUpdated;
+
+    if (achievementsUpdated) {
+      _syncWithProfileService();
+    }
+
+    return achievementsUpdated;
+  }
+
+  // Refresh financial insights based on app data
+  Future<void> _refreshFinancialInsights() async {
+    final finances = _financeService;
+
+    // Calculate basic financial insights
+    // Use the transactions to calculate income and expenses
+    double totalIncome = 0;
+    double totalExpenses = 0;
+
+    // Calculate from transactions
+    for (final transaction in finances.transactions) {
+      if (transaction.type == TransactionType.income) {
+        totalIncome += transaction.amount;
+      } else {
+        totalExpenses += transaction.amount;
+      }
+    }
+
+    final savingsRate =
+        totalIncome > 0 ? (totalIncome - totalExpenses) / totalIncome : 0;
+
+    // Update insights
+    _financialInsights = {
+      'total_income': totalIncome,
+      'total_expenses': totalExpenses,
+      'savings_rate': savingsRate,
+      'last_updated': DateTime.now().toIso8601String(),
+    };
+
+    // Generate personalized tips based on financial data
+    _generatePersonalizedTips();
+
+    // Save changes
+    await _saveGamificationData();
+  }
+
+  // This notification method is already defined at the top of the class
+
+  // Load challenges from SharedPreferences
+  Future<void> _loadChallenges() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      // Load daily challenges
+      final dailyChallengesJson = prefs.getString(_dailyChallengesKey);
+      if (dailyChallengesJson != null) {
+        final List<dynamic> challengesList = jsonDecode(dailyChallengesJson);
+        _dailyChallenges =
+            challengesList.map((item) => Challenge.fromJson(item)).toList();
+      }
+
+      // Load quests
+      final questsJson = prefs.getString(_questsKey);
+      if (questsJson != null) {
+        final List<dynamic> questsList = jsonDecode(questsJson);
+        _quests = questsList.map((item) => Quest.fromJson(item)).toList();
+      }
+    } catch (e) {
+      debugPrint('Error loading challenges: $e');
+      _dailyChallenges.clear();
+      _quests.clear();
+    }
+  }
+
+  // Save challenges to SharedPreferences
+  Future<void> _saveChallenges() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      // Save daily challenges
+      final dailyChallengesJson = jsonEncode(
+        _dailyChallenges.map((challenge) => challenge.toJson()).toList(),
+      );
+      await prefs.setString(_dailyChallengesKey, dailyChallengesJson);
+
+      // Save quests
+      final questsJson = jsonEncode(
+        _quests.map((quest) => quest.toJson()).toList(),
+      );
+      await prefs.setString(_questsKey, questsJson);
+    } catch (e) {
+      debugPrint('Error saving challenges: $e');
+    }
+  }
+}
+
