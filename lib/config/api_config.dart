@@ -13,8 +13,8 @@ class ApiConfig {
   }
 
   // Auth endpoints
-  static String get login => '$baseUrl/auth/login';
-  static String get register => '$baseUrl/auth/register';
+  static String get login => '$baseUrl/auth/signin';
+  static String get register => '$baseUrl/auth/signup';
   
   // User endpoints
   static String get users => '$baseUrl/users';

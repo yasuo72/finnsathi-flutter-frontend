@@ -12,6 +12,92 @@ class ProfileHeader extends StatelessWidget {
     required this.profile,
     this.onProfileUpdated,
   }) : super(key: key);
+  
+  // Helper method to build profile image with proper handling of different URL formats
+  Widget _buildProfileImage(String imageUrl, double width, double height) {
+    // Default image to show if URL is empty or invalid
+    if (imageUrl.isEmpty) {
+      return Image.asset(
+        'assets/default_avatar.png',
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return Icon(Icons.person, color: Colors.white, size: width * 0.6);
+        },
+      );
+    }
+    
+    // Handle local file paths
+    if (imageUrl.startsWith('file://')) {
+      return Image.file(
+        File(imageUrl.replaceFirst('file://', '')),
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          print('Error loading local image: $error');
+          return Icon(Icons.person, color: Colors.white, size: width * 0.6);
+        },
+      );
+    }
+    
+    // Handle backend server paths that start with /uploads/
+    if (imageUrl.startsWith('/uploads/')) {
+      final baseUrl = 'https://finnsathi-ai-expense-monitor-production.up.railway.app';
+      final fullUrl = '$baseUrl$imageUrl';
+      print('Loading profile image from: $fullUrl');
+      
+      return Image.network(
+        fullUrl,
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          print('Error loading network image: $error');
+          return Icon(Icons.person, color: Colors.white, size: width * 0.6);
+        },
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Center(
+            child: CircularProgressIndicator(
+              value: loadingProgress.expectedTotalBytes != null
+                  ? loadingProgress.cumulativeBytesLoaded / 
+                      loadingProgress.expectedTotalBytes!
+                  : null,
+              color: Colors.white,
+              strokeWidth: 2,
+            ),
+          );
+        },
+      );
+    }
+    
+    // Handle full URLs
+    return Image.network(
+      imageUrl,
+      width: width,
+      height: height,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        print('Error loading network image: $error');
+        return Icon(Icons.person, color: Colors.white, size: width * 0.6);
+      },
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return Center(
+          child: CircularProgressIndicator(
+            value: loadingProgress.expectedTotalBytes != null
+                ? loadingProgress.cumulativeBytesLoaded / 
+                    loadingProgress.expectedTotalBytes!
+                : null,
+            color: Colors.white,
+            strokeWidth: 2,
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -88,19 +174,7 @@ class ProfileHeader extends StatelessWidget {
                               children: [
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(16),
-                                  child: profile.avatarUrl.startsWith('file://')
-                                    ? Image.file(
-                                        File(profile.avatarUrl.replaceFirst('file://', '')),
-                                        width: 300,
-                                        height: 300,
-                                        fit: BoxFit.cover,
-                                      )
-                                    : Image.network(
-                                        profile.avatarUrl,
-                                        width: 300,
-                                        height: 300,
-                                        fit: BoxFit.cover,
-                                      ),
+                                  child: _buildProfileImage(profile.avatarUrl, 300, 300),
                                 ),
                                 const SizedBox(height: 16),
                                 ElevatedButton.icon(
@@ -119,9 +193,14 @@ class ProfileHeader extends StatelessWidget {
                       },
                       child: CircleAvatar(
                         radius: 40,
-                        backgroundImage: profile.avatarUrl.startsWith('file://') 
-                          ? FileImage(File(profile.avatarUrl.replaceFirst('file://', ''))) as ImageProvider
-                          : NetworkImage(profile.avatarUrl),
+                        backgroundColor: Colors.grey[300],
+                        child: ClipOval(
+                          child: SizedBox(
+                            width: 80,
+                            height: 80,
+                            child: _buildProfileImage(profile.avatarUrl, 80, 80),
+                          ),
+                        ),
                       ),
                     ),
                   ),
