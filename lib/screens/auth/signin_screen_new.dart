@@ -1,12 +1,16 @@
 // This file contains the Sign In (Login) screen for the Finsaathi Multi app.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:glassmorphism/glassmorphism.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../widgets/custom_text_field.dart';
 import 'signup_screen_new.dart';
 import '../../services/auth_service.dart';
 import '../../services/auth_state_service.dart';
+import '../../services/google_auth_service.dart';
 import 'dart:convert';
 
 class SignInScreen extends StatefulWidget {
@@ -340,10 +344,18 @@ class _SignInScreenState extends State<SignInScreen>
                                       
                                       print('Login successful, navigating to home screen');
                                       
+                                      // Trigger immediate data refresh by setting the login flag
+                                      final prefs = await SharedPreferences.getInstance();
+                                      await prefs.setBool('login_successful', true);
+                                      await prefs.setInt('login_timestamp', DateTime.now().millisecondsSinceEpoch);
+                                      print('🔄 Set login_successful flag to trigger data refresh');
+                                      
                                       // Authentication successful, navigate to home screen
-                                      Navigator.pushReplacementNamed(
+                                      // Clear the entire navigation stack to prevent back navigation
+                                      Navigator.pushNamedAndRemoveUntil(
                                         context,
                                         '/',
+                                        (route) => false,
                                       );
                                     } else {
                                       // Try to parse the error response for more details
@@ -453,26 +465,123 @@ class _SignInScreenState extends State<SignInScreen>
                     child: SizedBox(
                       width: double.infinity,
                       height: 50,
-                      child: OutlinedButton.icon(
-                        icon: const Icon(
-                          Icons.g_mobiledata_rounded,  // Using a material icon as a replacement
-                          size: 24,
-                          color: Colors.blue,
-                        ),
-                        label: Text(
-                          'Sign in with Google',
-                          style: GoogleFonts.poppins(
-                            color: textColor,
-                            fontWeight: FontWeight.w500,
+                      child: InkWell(
+                        onTap: () async {
+                          if (_isLoading) return; // Prevent multiple taps
+                          
+                          debugPrint('🔘 Google Sign-In button pressed');
+                          setState(() {
+                            _isLoading = true;
+                          });
+                          
+                          try {
+                            // Create a GoogleSignIn instance
+                            final GoogleSignIn googleSignIn = GoogleSignIn(
+                              scopes: ['email', 'profile'],
+                              serverClientId: '245798805380-od382nvaj7jg2jbodv5lp9033lg5f754.apps.googleusercontent.com',
+                            );
+                            
+                            // First try to sign out to ensure a clean state
+                            try {
+                              await googleSignIn.signOut();
+                              debugPrint('🔑 Signed out previous Google session for clean state');
+                            } catch (e) {
+                              debugPrint('⚠️ Error signing out previous Google session (can be ignored): $e');
+                            }
+                            
+                            // Now attempt to sign in
+                            debugPrint('📱 Attempting Google Sign-In...');
+                            final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
+                            
+                            if (googleUser == null) {
+                              debugPrint('❌ Google Sign-In was cancelled by user');
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Sign-in was cancelled'),
+                                    duration: Duration(seconds: 2),
+                                  ),
+                                );
+                              }
+                              return;
+                            }
+                            
+                            // User authenticated with Google, now get auth tokens
+                            debugPrint('🔑 Getting Google authentication tokens...');
+                            final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+                            
+                            if (googleAuth.idToken == null) {
+                              throw Exception('Failed to get ID token from Google');
+                            }
+                            
+                            debugPrint('✅ Got Google auth tokens: ID token length: ${googleAuth.idToken?.length ?? 0}');
+                            
+                            // Authenticate with backend
+                            debugPrint('🔄 Authenticating with backend...');
+                            final success = await GoogleAuthService.authenticateWithBackend(
+                              googleUser: googleUser,
+                              idToken: googleAuth.idToken!,
+                              accessToken: googleAuth.accessToken!,
+                            );
+                            
+                            if (success) {
+                              debugPrint('✅ Backend authentication successful');
+                              if (mounted) {
+                                // Navigate to home screen on successful authentication
+                                Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+                              }
+                            } else {
+                              debugPrint('❌ Backend authentication failed');
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Authentication with server failed. Please try again.'),
+                                    duration: Duration(seconds: 3),
+                                  ),
+                                );
+                              }
+                            }
+                          } catch (e) {
+                            debugPrint('❌ Error during Google Sign-In: $e');
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Sign-in error: ${e.toString().substring(0, e.toString().length > 100 ? 100 : e.toString().length)}'),
+                                  duration: const Duration(seconds: 3),
+                                ),
+                              );
+                            }
+                          } finally {
+                            if (mounted) {
+                              setState(() {
+                                _isLoading = false;
+                              });
+                            }
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(8),
                           ),
-                        ),
-                        onPressed: () {},
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                            color: primaryColor.withOpacity(0.5),
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.g_mobiledata_rounded,
+                                size: 28,
+                                color: Colors.blue,
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                'Sign in with Google',
+                                style: GoogleFonts.poppins(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -518,6 +627,15 @@ class _SignInScreenState extends State<SignInScreen>
               ],
             ),
           ),
+          
+          // Loading overlay
+          if (_isLoading)
+            Container(
+              color: Colors.black.withOpacity(0.5),
+              child: const Center(
+                child: CircularProgressIndicator(),
+              ),
+            ),
         ],
       ),
     );
