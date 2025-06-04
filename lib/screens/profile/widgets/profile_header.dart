@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../models/user_profile_model.dart';
 import 'package:animate_do/animate_do.dart';
 import 'dart:io';
+import 'dart:convert';
 
 class ProfileHeader extends StatelessWidget {
   final UserProfile profile;
@@ -17,26 +18,64 @@ class ProfileHeader extends StatelessWidget {
   Widget _buildProfileImage(String imageUrl, double width, double height) {
     // Default image to show if URL is empty or invalid
     if (imageUrl.isEmpty) {
+      print('Empty profile image URL in profile header, showing default avatar');
       return Image.asset(
         'assets/default_avatar.png',
         width: width,
         height: height,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
+          print('Error loading default avatar in profile header: $error');
           return Icon(Icons.person, color: Colors.white, size: width * 0.6);
         },
       );
     }
     
+    print('Loading profile image in profile header from URL: $imageUrl');
+    
+    // Handle base64 encoded images
+    if (imageUrl.startsWith('data:image')) {
+      try {
+        // Split the string to get the base64 part
+        final parts = imageUrl.split(',');
+        if (parts.length != 2 || parts[1].isEmpty) {
+          print('Base64 image data is empty or invalid in profile header');
+          return Icon(Icons.person, color: Colors.white, size: width * 0.6);
+        }
+        
+        // Extract and decode the base64 string
+        final base64String = parts[1].trim();
+        print('Base64 string length in profile header: ${base64String.length}');
+        final imageBytes = base64Decode(base64String);
+        
+        print('Displaying base64 encoded image in profile header, bytes length: ${imageBytes.length}');
+        return Image.memory(
+          imageBytes,
+          width: width,
+          height: height,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            print('Error loading base64 image in profile header: $error');
+            return Icon(Icons.person, color: Colors.white, size: width * 0.6);
+          },
+        );
+      } catch (e) {
+        print('Error decoding base64 image in profile header: $e');
+        return Icon(Icons.person, color: Colors.white, size: width * 0.6);
+      }
+    }
+    
     // Handle local file paths
     if (imageUrl.startsWith('file://')) {
+      final filePath = imageUrl.replaceFirst('file://', '');
+      print('Displaying local file image in profile header from: $filePath');
       return Image.file(
-        File(imageUrl.replaceFirst('file://', '')),
+        File(filePath),
         width: width,
         height: height,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
-          print('Error loading local image: $error');
+          print('Error loading local image in profile header: $error');
           return Icon(Icons.person, color: Colors.white, size: width * 0.6);
         },
       );
@@ -44,17 +83,60 @@ class ProfileHeader extends StatelessWidget {
     
     // Handle backend server paths that start with /uploads/
     if (imageUrl.startsWith('/uploads/')) {
-      final baseUrl = 'https://finnsathi-ai-expense-monitor-production.up.railway.app';
+      final baseUrl = 'https://finnsathi-ai-expense-monitor-backend-production.up.railway.app';
       final fullUrl = '$baseUrl$imageUrl';
-      print('Loading profile image from: $fullUrl');
+      print('Loading profile image in profile header from backend server: $fullUrl');
       
       return Image.network(
         fullUrl,
         width: width,
         height: height,
         fit: BoxFit.cover,
+        headers: const {
+          'Accept': 'image/*',
+        },
+        cacheWidth: 300, // Optimize image loading
         errorBuilder: (context, error, stackTrace) {
-          print('Error loading network image: $error');
+          print('Error loading network image from backend in profile header: $error');
+          return Icon(Icons.person, color: Colors.white, size: width * 0.6);
+        },
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Center(
+            child: CircularProgressIndicator(
+              value: loadingProgress.expectedTotalBytes != null
+                  ? loadingProgress.cumulativeBytesLoaded / 
+                      loadingProgress.expectedTotalBytes!
+                  : null,
+              color: Colors.white,
+              strokeWidth: 2,
+            ),
+          );
+        },
+      );
+    }
+    
+    // Check if it's just a filename without path, assume it's in uploads directory
+    if (!imageUrl.contains('/') && 
+        (imageUrl.toLowerCase().endsWith('.jpg') || 
+         imageUrl.toLowerCase().endsWith('.jpeg') || 
+         imageUrl.toLowerCase().endsWith('.png') || 
+         imageUrl.toLowerCase().endsWith('.gif'))) {
+      final baseUrl = 'https://finnsathi-ai-expense-monitor-backend-production.up.railway.app';
+      final fullUrl = '$baseUrl/uploads/$imageUrl';
+      print('Loading profile image in profile header from filename: $fullUrl');
+      
+      return Image.network(
+        fullUrl,
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+        headers: const {
+          'Accept': 'image/*',
+        },
+        cacheWidth: 300, // Optimize image loading
+        errorBuilder: (context, error, stackTrace) {
+          print('Error loading network image from filename in profile header: $error');
           return Icon(Icons.person, color: Colors.white, size: width * 0.6);
         },
         loadingBuilder: (context, child, loadingProgress) {
@@ -74,13 +156,18 @@ class ProfileHeader extends StatelessWidget {
     }
     
     // Handle full URLs
+    print('Loading profile image in profile header from full URL: $imageUrl');
     return Image.network(
       imageUrl,
       width: width,
       height: height,
       fit: BoxFit.cover,
+      headers: const {
+        'Accept': 'image/*',
+      },
+      cacheWidth: 300, // Optimize image loading
       errorBuilder: (context, error, stackTrace) {
-        print('Error loading network image: $error');
+        print('Error loading network image from URL in profile header: $error');
         return Icon(Icons.person, color: Colors.white, size: width * 0.6);
       },
       loadingBuilder: (context, child, loadingProgress) {

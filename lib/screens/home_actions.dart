@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'wallet/wallet_password_screen.dart';
-import 'budget_savings_screen.dart';
 import 'add_savings_goal_screen.dart';
 import 'add_budget_screen.dart';
+import 'savings_goal_screen.dart';
 
 class HomeActions {
   static void onProfileTap(BuildContext context) {
@@ -38,11 +38,11 @@ class HomeActions {
   }
 
   static void onSavingsMoreTap(BuildContext context) {
-    // Navigate to budget savings screen for allocation
+    // Navigate to savings goal screen with detailed view and add new goal functionality
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const BudgetSavingsScreen(),
+        builder: (context) => const SavingsGoalScreen(),
       ),
     );
   }

@@ -411,24 +411,12 @@ class _BudgetSavingsScreenState extends State<BudgetSavingsScreen> {
         // Now add the amount to the newly created goal
         await financeService.addToSavingsGoal(createdGoal.id, savingsAmount);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Created new goal "${createdGoal.title}" and allocated ₹${savingsAmount.toStringAsFixed(2)}'),
-            backgroundColor: Colors.teal,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        // SnackBar removed
       } else {
         // Regular existing goal
         await financeService.addToSavingsGoal(_selectedGoal!.id, savingsAmount);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('₹${savingsAmount.toStringAsFixed(2)} allocated to ${_selectedGoal!.title}'),
-            backgroundColor: Colors.blue,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        // SnackBar removed
       }
 
       // Create a transaction record for this allocation
@@ -451,13 +439,7 @@ class _BudgetSavingsScreenState extends State<BudgetSavingsScreen> {
         _isCustomGoal = false;
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: ${e.toString()}'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      // SnackBar removed
     }
   }
 }

@@ -1,8 +1,10 @@
 // This file contains the Sign Up screen for the Finsaathi Multi app.
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:animate_do/animate_do.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../widgets/custom_text_field.dart';
 import '../../services/auth_service.dart';
 
@@ -20,6 +22,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController _dobController = TextEditingController();
   bool _agreed = false;
   bool _isLoading = false;
+  
+  // Profile picture variables
+  File? _profileImage;
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void dispose() {
@@ -29,6 +35,125 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _passwordController.dispose();
     super.dispose();
   }
+  
+  // Method to show image picker options
+  Future<void> _showImagePickerOptions() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final textColor = isDark ? Colors.white : const Color(0xFF333333);
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: backgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Profile Picture',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: textColor,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.camera_alt, color: Colors.blue),
+              ),
+              title: Text(
+                'Take a Photo',
+                style: TextStyle(
+                  color: textColor,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _pickProfileImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.photo_library, color: Colors.green),
+              ),
+              title: Text(
+                'Choose from Gallery',
+                style: TextStyle(
+                  color: textColor,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _pickProfileImage(ImageSource.gallery);
+              },
+            ),
+            if (_profileImage != null)
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.delete, color: Colors.red),
+                ),
+                title: Text(
+                  'Remove Photo',
+                  style: TextStyle(
+                    color: textColor,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() {
+                    _profileImage = null;
+                  });
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // Method to pick profile image
+  Future<void> _pickProfileImage(ImageSource source) async {
+    try {
+      final XFile? pickedFile = await _picker.pickImage(
+        source: source,
+        imageQuality: 80,
+        maxWidth: 800,
+      );
+      
+      if (pickedFile != null) {
+        setState(() {
+          _profileImage = File(pickedFile.path);
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error picking image: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +162,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     final backgroundColor = isDark ? const Color(0xFF121212) : Colors.white;
     final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : const Color(0xFF333333);
-    
+
     return Scaffold(
       backgroundColor: backgroundColor,
       appBar: AppBar(
@@ -63,17 +188,46 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       FadeInDown(
                         from: 30,
                         duration: const Duration(milliseconds: 600),
-                        child: Container(
-                          height: 80,
-                          width: 80,
-                          decoration: BoxDecoration(
-                            color: primaryColor.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.savings_outlined,
-                            size: 40,
-                            color: primaryColor,
+                        child: GestureDetector(
+                          onTap: _showImagePickerOptions,
+                          child: Container(
+                            height: 100,
+                            width: 100,
+                            decoration: BoxDecoration(
+                              color: primaryColor.withOpacity(0.1),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: primaryColor.withOpacity(0.3),
+                                width: 2,
+                              ),
+                              image: _profileImage != null
+                                  ? DecorationImage(
+                                      image: FileImage(_profileImage!),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
+                            ),
+                            child: _profileImage == null
+                                ? Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.person_outline_rounded,
+                                        size: 40,
+                                        color: primaryColor,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Add Photo',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: primaryColor,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : null,
                           ),
                         ),
                       ),
@@ -105,9 +259,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     ],
                   ),
                 ),
-                
+
                 const SizedBox(height: 24),
-                
+
                 // Form fields
                 FadeInUp(
                   from: 30,
@@ -220,9 +374,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     ),
                   ),
                 ),
-                
+
                 const SizedBox(height: 24),
-                
+
                 // Sign up button
                 FadeInUp(
                   from: 30,
@@ -241,28 +395,29 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         ),
                         elevation: 0,
                       ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
+                      child:
+                          _isLoading
+                              ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                              : Text(
+                                'Create Account',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            )
-                          : Text(
-                              'Create Account',
-                              style: GoogleFonts.poppins(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
                     ),
                   ),
                 ),
-                
+
                 const SizedBox(height: 16),
-                
+
                 // Sign in link
                 FadeInUp(
                   from: 30,
@@ -291,7 +446,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     ],
                   ),
                 ),
-                
+
                 const SizedBox(height: 40),
               ],
             ),
@@ -307,35 +462,48 @@ class _SignUpScreenState extends State<SignUpScreen> {
         _passwordController.text.isEmpty ||
         _dobController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please fill all fields'),
-        ),
+        const SnackBar(content: Text('Please fill all fields')),
       );
       return;
     }
+    
+    // Profile picture is optional, so no validation needed for it
 
     setState(() => _isLoading = true);
 
     try {
-      print('Attempting signup with: Name=${_nameController.text}, Email=${_emailController.text}, DOB=${_dobController.text}');
+      print(
+        'Attempting signup with: Name=${_nameController.text}, Email=${_emailController.text}, DOB=${_dobController.text}',
+      );
+    
+    // Log profile image details
+    if (_profileImage != null) {
+      print('Profile image selected: ${_profileImage!.path}');
+      print('Profile image exists: ${_profileImage!.existsSync()}');
+      print('Profile image size: ${_profileImage!.lengthSync()} bytes');
+    } else {
+      print('No profile image selected');
+    }
+
       final response = await AuthService.signup(
         name: _nameController.text,
         email: _emailController.text,
         password: _passwordController.text,
         dob: _dobController.text,
+        profileImage: _profileImage?.path,
       );
 
       if (!mounted) return;
-      
+
       print('Received response with status code: ${response.statusCode}');
-      
+
       if (response.statusCode >= 200 && response.statusCode < 300) {
         // Navigate to home screen using the correct root route
         print('Signup successful, navigating to home screen');
         Navigator.pushNamedAndRemoveUntil(
           context,
-          '/',  // Use root route for home screen
-          (route) => false,  // Clear all previous routes
+          '/', // Use root route for home screen
+          (route) => false, // Clear all previous routes
         );
       } else {
         // Try to parse the error response for more details
@@ -348,9 +516,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
             errorMessage = 'Signup failed: ${responseData['error']}';
           }
         } catch (e) {
-          errorMessage = 'Signup failed with status code: ${response.statusCode}';
+          errorMessage =
+              'Signup failed with status code: ${response.statusCode}';
         }
-        
+
         print('Error message: $errorMessage');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -365,9 +534,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       print('Exception during signup: ${e.toString()}');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'An error occurred: ${e.toString()}',
-          ),
+          content: Text('An error occurred: ${e.toString()}'),
           backgroundColor: Colors.red.shade700,
           duration: const Duration(seconds: 5),
         ),

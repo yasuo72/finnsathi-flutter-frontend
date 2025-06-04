@@ -42,33 +42,46 @@ class _CurvedNavBarState extends State<CurvedNavBar> {
   Widget build(BuildContext context) {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     
-    // Theme-dependent colors to match the image
-    final navBarColor = isDarkMode ? const Color(0xE7393737) : Colors.white;
-    final backgroundColor = isDarkMode ?  Colors.transparent : Colors.transparent;
-    final inactiveIconColor = isDarkMode ? Colors.grey.shade300 : Colors.grey.shade600;
+    // Theme-dependent colors to match the dark theme of the app
+    final navBarColor = isDarkMode ? const Color(0xFF1E2126) : Colors.white;
+    final backgroundColor = Colors.transparent; // Always transparent background
+    final inactiveIconColor = isDarkMode ? Colors.grey.shade400 : Colors.grey.shade600;
     
-    return CurvedNavigationBar(
-      key: _navBarKey,
-      index: widget.currentIndex,
-      height: 65.0,
-      items: List.generate(_icons.length, (index) {
-        return Icon(
-          _icons[index],
-          size: 30,
-          color: widget.currentIndex == index 
-              ? _activeColors[index]
-              : inactiveIconColor,
-        );
-      }),
-      color: navBarColor,
-      buttonBackgroundColor: navBarColor,
-      backgroundColor: backgroundColor,
-      animationCurve: Curves.easeInOut,
-      animationDuration: const Duration(milliseconds: 600),
-      onTap: (index) {
-        widget.onTap(index);
-      },
-      letIndexChange: (index) => true,
+    return Container(
+      decoration: BoxDecoration(
+        // Add a subtle gradient to make the nav bar blend with the background
+        gradient: isDarkMode ? LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.transparent,
+            const Color(0xFF1E2126).withOpacity(0.9),
+          ],
+        ) : null,
+      ),
+      child: CurvedNavigationBar(
+        key: _navBarKey,
+        index: widget.currentIndex,
+        height: 60.0, // Slightly smaller height
+        items: List.generate(_icons.length, (index) {
+          return Icon(
+            _icons[index],
+            size: 28, // Slightly smaller icons
+            color: widget.currentIndex == index 
+                ? _activeColors[index]
+                : inactiveIconColor,
+          );
+        }),
+        color: navBarColor.withOpacity(isDarkMode ? 0.85 : 1.0), // More transparent in dark mode
+        buttonBackgroundColor: navBarColor.withOpacity(isDarkMode ? 0.95 : 1.0),
+        backgroundColor: backgroundColor,
+        animationCurve: Curves.easeInOut,
+        animationDuration: const Duration(milliseconds: 600),
+        onTap: (index) {
+          widget.onTap(index);
+        },
+        letIndexChange: (index) => true,
+      ),
     );
   }
 }

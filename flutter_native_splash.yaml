@@ -1,0 +1,27 @@
+flutter_native_splash:
+  # Background color of the splash screen
+  color: "#FFFFFF"
+  
+  # Use text instead of image
+  image: assets/icon/app_icon.png
+  
+  # Branding text shown on splash screen
+  branding: "Finsaathi"
+  branding_mode: bottom
+  
+  # Background color for dark mode
+  color_dark: "#121212"
+  
+  # Android 12 specific settings
+  android_12:
+    # Icon background color for Android 12
+    icon_background_color: "#FFFFFF"
+    
+    # Icon background color for Android 12 in dark mode
+    icon_background_color_dark: "#121212"
+    
+    # Branding text for Android 12
+    branding: "Finsaathi"
+    
+  # Web specific settings
+  web: false

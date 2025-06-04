@@ -15,7 +15,7 @@ class AIChatService extends ChangeNotifier {
   bool _isGenerating = false;
   
   // Claude API configuration (using Anthropic's API)
-  final String _apiEndpoint = '';
+  final String _apiEndpoint = 'https://api.anthropic.com/v1/messages';
   String? _apiKey;
 
   List<ChatMessage> get messages => _messages;
@@ -36,14 +36,12 @@ class AIChatService extends ChangeNotifier {
       if (_apiKey == null || _apiKey!.isEmpty) {
         debugPrint('Warning: OpenAI API key not found in environment variables');
         // As a fallback, hardcode the API key directly
-        _apiKey = '';
-        debugPrint('Set API key manually as fallback');
+        debugPrint('Error: OpenAI API key not found in environment variables and no fallback is set.');
       }
     } catch (e) {
       debugPrint('Error loading API key: $e');
       // As a fallback, hardcode the API key directly
-      _apiKey = '';
-      debugPrint('Set API key manually as fallback after error');
+      debugPrint('Error: Failed to load API key and no fallback is set.');
     }
   }
 

@@ -45,5 +45,19 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- Google Sign-in Section -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<!-- Replace this value with your reversed client ID from Google Cloud Console -->
+				<string>com.googleusercontent.apps.YOUR-CLIENT-ID</string>
+				<string>finsathi</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

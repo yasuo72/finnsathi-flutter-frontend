@@ -605,7 +605,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with TickerProvider
     for (var transaction in incomeTransactions) {
       if (transaction.category == null) continue;
 
-      final category = transaction.category!;
+      final category = transaction.category;
       if (!categoryMap.containsKey(category)) {
         categoryMap[category] = [];
       }
@@ -708,7 +708,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with TickerProvider
     if (transactions.isNotEmpty) {
       final sourceCount = <String, int>{};
       for (var t in transactions) {
-        final source = t.category != null ? t.category.name : 'Other';
+        final source = t.category.name ?? 'Other';
         sourceCount[source] = (sourceCount[source] ?? 0) + 1;
       }
 
@@ -2087,10 +2087,6 @@ class _StatisticsScreenState extends State<StatisticsScreen> with TickerProvider
   }
 
   // Helpers
-  String _capitalize(String text) {
-    if (text.isEmpty) return '';
-    return text[0].toUpperCase() + text.substring(1);
-  }
 
   // Predictive analytics card with forecasts
   Widget _buildPredictiveAnalyticsCard(double currentIncome, double previousIncome,
@@ -2346,30 +2342,29 @@ class _StatisticsScreenState extends State<StatisticsScreen> with TickerProvider
     );
   }
 
-
-
+  /// Returns a deterministic color based on the category name.
   Color _getCategoryColor(String category, {bool isExpense = false}) {
     final colors = isExpense
         ? [
-      Colors.red,
-      Colors.orange,
-      Colors.amber,
-      Colors.purple,
-      Colors.indigo,
-      Colors.pink,
-      Colors.brown,
-      Colors.deepOrange,
-    ]
+            Colors.red,
+            Colors.orange,
+            Colors.amber,
+            Colors.purple,
+            Colors.indigo,
+            Colors.pink,
+            Colors.brown,
+            Colors.deepOrange,
+          ]
         : [
-      Colors.blue,
-      Colors.green,
-      Colors.teal,
-      Colors.cyan,
-      Colors.lightBlue,
-      Colors.lime,
-      Colors.lightGreen,
-      Colors.indigoAccent,
-    ];
+            Colors.blue,
+            Colors.green,
+            Colors.teal,
+            Colors.cyan,
+            Colors.lightBlue,
+            Colors.lime,
+            Colors.lightGreen,
+            Colors.indigoAccent,
+          ];
 
     // Generate a deterministic color based on category name
     final index = category.hashCode % colors.length;

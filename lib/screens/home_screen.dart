@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/curved_nav_bar.dart';
 import 'home_actions.dart';
 import 'notification_screen.dart';
@@ -16,6 +17,7 @@ import '../services/profile_service.dart';
 import '../models/finance_models.dart';
 import '../models/user_profile_model.dart';
 import 'dart:io';
+import 'dart:convert';
 import 'add_transaction_screen.dart';
 import 'receipt_scanner_screen.dart';
 import 'ai_chat_screen.dart';
@@ -42,26 +44,281 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // Initialize profile service immediately to avoid late initialization errors
     _profileService = Provider.of<ProfileService>(context, listen: false);
-    
-    // Refresh the profile data to ensure it's up-to-date with signup/login information
+
+    // Force refresh the profile data to ensure it's up-to-date with signup/login information
     _profileService?.refreshProfile();
+
+    // Initialize profile future
     _profileFuture = _profileService?.getUserProfile();
-    
-    // Add a small delay to ensure profile data is loaded after auth data is saved
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        setState(() {
-          _profileFuture = _profileService?.getUserProfile();
-        });
+
+    // Force refresh finance data immediately after login to ensure transactions are loaded
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Refresh finance data
+      final financeService = Provider.of<FinanceService>(
+        context,
+        listen: false,
+      );
+      print('🔄 Home screen loaded - forcing finance data refresh');
+      financeService.forceRefreshData();
+
+      // Force refresh profile data again after a short delay
+      // This ensures we get the latest profile data including any profile picture updates
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) {
+          _refreshProfile();
+          print('🔄 Refreshing profile data after delay');
+        }
+      });
+    });
+
+    // Listen for shared preferences changes that indicate login success
+    // This helps us refresh the profile when the user logs in
+    SharedPreferences.getInstance().then((prefs) {
+      final loginSuccessful = prefs.getBool('login_successful') ?? false;
+      if (loginSuccessful) {
+        print('🔑 Login detected - refreshing profile data');
+        _refreshProfile();
+        // Reset the flag
+        prefs.setBool('login_successful', false);
       }
     });
   }
 
   // Refresh profile data if needed
   void _refreshProfile() {
+    if (_profileService == null) {
+      // Initialize profile service if it's not already initialized
+      _profileService = Provider.of<ProfileService>(context, listen: false);
+    }
+
+    // Force refresh the profile data from the service
+    _profileService?.refreshProfile();
+
+    // Update the future to trigger UI refresh
     setState(() {
       _profileFuture = _profileService?.getUserProfile();
+      print('🔄 Profile data refreshed in home screen');
     });
+  }
+
+  // Helper method to build profile image with proper handling of different URL formats
+  Widget _buildProfileImage(String imageUrl) {
+    // Default image to show if URL is empty or invalid
+    if (imageUrl.isEmpty) {
+      print('Empty profile image URL, showing default avatar');
+      return Image.asset(
+        'assets/default_avatar.png',
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          print('Error loading default avatar: $error');
+          return const Icon(Icons.person, color: Colors.white);
+        },
+      );
+    }
+
+    print('Loading profile image from URL: $imageUrl');
+
+    // Handle base64 encoded images
+    if (imageUrl.startsWith('data:image')) {
+      try {
+        // Split the string to get the base64 part
+        final parts = imageUrl.split(',');
+        
+        // More robust check for valid base64 data
+        if (parts.length < 2) {
+          print('❌ Invalid base64 image format: missing comma separator');
+          return Image.asset(
+            'assets/default_avatar.png',
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(Icons.person, color: Colors.white);
+            },
+          );
+        }
+        
+        // Extract and validate the base64 string
+        final base64String = parts[1].trim();
+        if (base64String.isEmpty) {
+          print('❌ Base64 image data is empty');
+          return Image.asset(
+            'assets/default_avatar.png',
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(Icons.person, color: Colors.white);
+            },
+          );
+        }
+        
+        print('📏 Base64 string length: ${base64String.length}');
+        
+        // Additional validation for base64 string
+        if (base64String.length < 10) { // Arbitrary minimum length for valid image
+          print('❌ Base64 string too short to be valid image data');
+          return Image.asset(
+            'assets/default_avatar.png',
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(Icons.person, color: Colors.white);
+            },
+          );
+        }
+        
+        final imageBytes = base64Decode(base64String);
+        if (imageBytes.isEmpty) {
+          print('❌ Decoded base64 image has zero bytes');
+          return Image.asset(
+            'assets/default_avatar.png',
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(Icons.person, color: Colors.white);
+            },
+          );
+        }
+
+        print('✅ Displaying base64 encoded image, bytes length: ${imageBytes.length}');
+        return Image.memory(
+          imageBytes,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            print('❌ Error loading base64 image: $error');
+            return Image.asset(
+              'assets/default_avatar.png',
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.white),
+            );
+          },
+        );
+      } catch (e, stackTrace) {
+        print('❌ Error decoding base64 image: $e');
+        print('📜 Stack trace: $stackTrace');
+        return Image.asset(
+          'assets/default_avatar.png',
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const Icon(Icons.person, color: Colors.white);
+          },
+        );
+      }
+    }
+
+    // Handle local file paths
+    if (imageUrl.startsWith('file://')) {
+      final filePath = imageUrl.replaceFirst('file://', '');
+      print('Displaying local file image from: $filePath');
+      return Image.file(
+        File(filePath),
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          print('Error loading local image: $error');
+          return const Icon(Icons.person, color: Colors.white);
+        },
+      );
+    }
+
+    // Handle backend server paths that start with /uploads/
+    if (imageUrl.startsWith('/uploads/')) {
+      final baseUrl =
+          'https://finnsathi-ai-expense-monitor-backend-production.up.railway.app';
+      final fullUrl = '$baseUrl$imageUrl';
+      print('Loading profile image from backend server: $fullUrl');
+
+      return Image.network(
+        fullUrl,
+        fit: BoxFit.cover,
+        headers: const {'Accept': 'image/*'},
+        cacheWidth: 300, // Optimize image loading
+        errorBuilder: (context, error, stackTrace) {
+          print('Error loading network image from backend: $error');
+          // If there's an error loading the image, try to refresh the profile
+          Future.delayed(Duration.zero, () {
+            _refreshProfile();
+          });
+          return const Icon(Icons.person, color: Colors.white);
+        },
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Center(
+            child: CircularProgressIndicator(
+              value:
+                  loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
+                      : null,
+              color: Colors.white,
+              strokeWidth: 2,
+            ),
+          );
+        },
+      );
+    }
+
+    // Check if it's just a filename without path, assume it's in uploads directory
+    if (!imageUrl.contains('/') &&
+        (imageUrl.toLowerCase().endsWith('.jpg') ||
+            imageUrl.toLowerCase().endsWith('.jpeg') ||
+            imageUrl.toLowerCase().endsWith('.png') ||
+            imageUrl.toLowerCase().endsWith('.gif'))) {
+      final baseUrl =
+          'https://finnsathi-ai-expense-monitor-backend-production.up.railway.app';
+      final fullUrl = '$baseUrl/uploads/$imageUrl';
+      print('Loading profile image from filename: $fullUrl');
+
+      return Image.network(
+        fullUrl,
+        fit: BoxFit.cover,
+        headers: const {'Accept': 'image/*'},
+        cacheWidth: 300, // Optimize image loading
+        errorBuilder: (context, error, stackTrace) {
+          print('Error loading network image from filename: $error');
+          return const Icon(Icons.person, color: Colors.white);
+        },
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Center(
+            child: CircularProgressIndicator(
+              value:
+                  loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
+                      : null,
+              color: Colors.white,
+              strokeWidth: 2,
+            ),
+          );
+        },
+      );
+    }
+
+    // Handle full URLs (http:// or https://)
+    print('Loading profile image from full URL: $imageUrl');
+    return Image.network(
+      imageUrl,
+      fit: BoxFit.cover,
+      headers: const {'Accept': 'image/*'},
+      cacheWidth: 300, // Optimize image loading
+      errorBuilder: (context, error, stackTrace) {
+        print('Error loading network image from URL: $error');
+        // If there's an error loading the image, try to refresh the profile
+        Future.delayed(Duration.zero, () {
+          _refreshProfile();
+        });
+        return const Icon(Icons.person, color: Colors.white);
+      },
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return Center(
+          child: CircularProgressIndicator(
+            value:
+                loadingProgress.expectedTotalBytes != null
+                    ? loadingProgress.cumulativeBytesLoaded /
+                        loadingProgress.expectedTotalBytes!
+                    : null,
+            color: Colors.white,
+            strokeWidth: 2,
+          ),
+        );
+      },
+    );
   }
 
   // Removed dummy data - using data from FinanceService instead
@@ -86,22 +343,22 @@ class _HomeScreenState extends State<HomeScreen> {
         onTap: _onItemTapped,
       ),
       floatingActionButton:
-      (_selectedIndex == 0 || _selectedIndex == 1)
-          ? AnimatedFAB(
-        onAddExpense: () {
-          _navigateToAddTransaction(TransactionType.expense);
-        },
-        onAddIncome: () {
-          _navigateToAddTransaction(TransactionType.income);
-        },
-        onReceiptScanner: () {
-          _navigateToReceiptScanner();
-        },
-        onAiChat: () {
-          _navigateToAiChat();
-        },
-      )
-          : null,
+          (_selectedIndex == 0 || _selectedIndex == 1)
+              ? AnimatedFAB(
+                onAddExpense: () {
+                  _navigateToAddTransaction(TransactionType.expense);
+                },
+                onAddIncome: () {
+                  _navigateToAddTransaction(TransactionType.income);
+                },
+                onReceiptScanner: () {
+                  _navigateToReceiptScanner();
+                },
+                onAiChat: () {
+                  _navigateToAiChat();
+                },
+              )
+              : null,
     );
   }
 
@@ -178,9 +435,9 @@ class _HomeScreenState extends State<HomeScreen> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors:
-          isDark
-              ? [Color(0xFF2C3E50), Color(0xFF1A1A2E)]
-              : [primaryColor.withOpacity(0.8), primaryColor],
+              isDark
+                  ? [Color(0xFF2C3E50), Color(0xFF1A1A2E)]
+                  : [primaryColor.withOpacity(0.8), primaryColor],
         ),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
@@ -202,14 +459,12 @@ class _HomeScreenState extends State<HomeScreen> {
               String userName = 'User';
               String avatarUrl =
                   'https://randomuser.me/api/portraits/lego/1.jpg';
-              bool isLocalImage = false;
 
               // If profile data is available, use it
               if (snapshot.hasData) {
                 final profile = snapshot.data!;
                 userName = profile.name;
                 avatarUrl = profile.avatarUrl;
-                isLocalImage = avatarUrl.startsWith('file://');
               }
 
               return GestureDetector(
@@ -256,18 +511,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(30),
-                            child:
-                            isLocalImage
-                                ? Image.file(
-                              File(
-                                avatarUrl.replaceFirst('file://', ''),
-                              ),
-                              fit: BoxFit.cover,
-                            )
-                                : Image.network(
-                              avatarUrl,
-                              fit: BoxFit.cover,
-                            ),
+                            child: _buildProfileImage(avatarUrl),
                           ),
                         ),
                         // Status indicator
@@ -363,11 +607,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         onPressed:
                             () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => NotificationPage(),
-                          ),
-                        ),
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => NotificationPage(),
+                              ),
+                            ),
                       ),
                     ),
                   ),
@@ -453,9 +697,9 @@ class _HomeScreenState extends State<HomeScreen> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors:
-          isDark
-              ? [const Color(0xFF0F2027), const Color(0xFF203A43)]
-              : [const Color(0xFF4066FF), const Color(0xFF2949c8)],
+              isDark
+                  ? [const Color(0xFF0F2027), const Color(0xFF203A43)]
+                  : [const Color(0xFF4066FF), const Color(0xFF2949c8)],
         ),
         borderRadius: BorderRadius.circular(28),
         boxShadow: [
@@ -535,9 +779,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: GestureDetector(
                       onTap:
                           () => HomeActions.onBalanceEyeTap(
-                        context,
-                        _toggleBalance,
-                      ),
+                            context,
+                            _toggleBalance,
+                          ),
                       child: Icon(
                         _balanceVisible
                             ? Icons.remove_red_eye_outlined
@@ -694,9 +938,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: TextStyle(
                         fontSize: 14,
                         color:
-                        isDark
-                            ? Colors.white.withOpacity(0.9)
-                            : Colors.black87,
+                            isDark
+                                ? Colors.white.withOpacity(0.9)
+                                : Colors.black87,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.3,
                       ),
@@ -713,9 +957,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                         color:
-                        isDark
-                            ? Colors.white.withOpacity(0.7)
-                            : Colors.black54,
+                            isDark
+                                ? Colors.white.withOpacity(0.7)
+                                : Colors.black54,
                       ),
                     ),
                     const SizedBox(width: 4),
@@ -780,17 +1024,17 @@ class _HomeScreenState extends State<HomeScreen> {
     // Get current month's budget data
     final now = DateTime.now();
     final currentMonthBudgets =
-    financeService.budgets.where((b) => b.isActive).toList();
+        financeService.budgets.where((b) => b.isActive).toList();
 
     final monthlyBudget = currentMonthBudgets.fold(
       0.0,
-          (sum, b) => sum + b.limit,
+      (sum, b) => sum + b.limit,
     );
     final monthlyExpense = financeService.totalExpense;
     final budgetProgress =
-    monthlyBudget > 0
-        ? (monthlyExpense / monthlyBudget).clamp(0.0, 1.0)
-        : 0.0;
+        monthlyBudget > 0
+            ? (monthlyExpense / monthlyBudget).clamp(0.0, 1.0)
+            : 0.0;
 
     // Calculate days left in the month
     final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
@@ -798,11 +1042,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Determine budget status color
     final budgetStatusColor =
-    budgetProgress > 0.8
-        ? Colors.redAccent
-        : budgetProgress > 0.6
-        ? Colors.orangeAccent
-        : Colors.greenAccent;
+        budgetProgress > 0.8
+            ? Colors.redAccent
+            : budgetProgress > 0.6
+            ? Colors.orangeAccent
+            : Colors.greenAccent;
 
     return GlassContainer(
       borderRadius: 24,
@@ -883,9 +1127,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         'Details',
                         style: TextStyle(
                           color:
-                          isDark
-                              ? Colors.white.withOpacity(0.9)
-                              : budgetStatusColor,
+                              isDark
+                                  ? Colors.white.withOpacity(0.9)
+                                  : budgetStatusColor,
                           fontWeight: FontWeight.w500,
                           fontSize: 12,
                         ),
@@ -895,9 +1139,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         Icons.arrow_forward_ios_rounded,
                         size: 10,
                         color:
-                        isDark
-                            ? Colors.white.withOpacity(0.9)
-                            : budgetStatusColor,
+                            isDark
+                                ? Colors.white.withOpacity(0.9)
+                                : budgetStatusColor,
                       ),
                     ],
                   ),
@@ -918,9 +1162,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(
                       fontSize: 13,
                       color:
-                      isDark
-                          ? Colors.white.withOpacity(0.7)
-                          : Colors.black54,
+                          isDark
+                              ? Colors.white.withOpacity(0.7)
+                              : Colors.black54,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -941,9 +1185,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         style: TextStyle(
                           fontSize: 14,
                           color:
-                          isDark
-                              ? Colors.white.withOpacity(0.6)
-                              : Colors.black45,
+                              isDark
+                                  ? Colors.white.withOpacity(0.6)
+                                  : Colors.black45,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -994,9 +1238,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(
                       fontSize: 13,
                       color:
-                      isDark
-                          ? Colors.white.withOpacity(0.7)
-                          : Colors.black54,
+                          isDark
+                              ? Colors.white.withOpacity(0.7)
+                              : Colors.black54,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -1093,127 +1337,373 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 10),
         savingsGoals.isEmpty
             ? Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              children: [
-                Icon(
-                  Icons.savings_outlined,
-                  size: 48,
-                  color:
-                  isDark ? Colors.grey.shade700 : Colors.grey.shade300,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'No savings goals yet',
-                  style: TextStyle(
-                    color:
-                    isDark
-                        ? Colors.grey.shade400
-                        : Colors.grey.shade600,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: () => HomeActions.onAddSavingsTap(context),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Savings Goal'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: theme.colorScheme.secondary,
-                    foregroundColor: theme.colorScheme.onSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        )
-            : SizedBox(
-          height: 180, // Fixed height for the horizontal list
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: savingsGoals.length,
-            itemBuilder: (context, index) {
-              final goal = savingsGoals[index];
-              return Container(
-                width: 250, // Fixed width for each card
-                margin: const EdgeInsets.only(right: 12),
-                child: InkWell(
-                  onTap:
-                      () => HomeActions.onSavingsTap(context, goal.title),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).cardColor,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey[200]!),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.savings_outlined,
+                      size: 48,
+                      color:
+                          isDark ? Colors.grey.shade700 : Colors.grey.shade300,
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          goal.title,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              '₹ ${goal.currentAmount.toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green,
-                              ),
-                            ),
-                            Text(
-                              'of ₹ ${goal.targetAmount.toStringAsFixed(0)}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        LinearProgressIndicator(
-                          value: goal.progress,
-                          color: goal.color,
-                          backgroundColor: Colors.grey[300],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              '${(goal.progress * 100).toStringAsFixed(0)}% complete',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                            if (goal.targetDate != null)
-                              Text(
-                                DateFormat(
-                                  'MMM d',
-                                ).format(goal.targetDate!),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey[500],
-                                ),
-                              ),
-                          ],
+                    const SizedBox(height: 8),
+                    Text(
+                      'No savings goals yet',
+                      style: TextStyle(
+                        color:
+                            isDark
+                                ? Colors.grey.shade400
+                                : Colors.grey.shade600,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: () => HomeActions.onAddSavingsTap(context),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Savings Goal'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: theme.colorScheme.secondary,
+                        foregroundColor: theme.colorScheme.onSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+            : SizedBox(
+              height: 206, // Increased height to fix bottom overflow
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: savingsGoals.length,
+                itemBuilder: (context, index) {
+                  final goal = savingsGoals[index];
+
+                  // Theme-aware colors
+                  final cardColor = isDark ? Colors.grey[850] : Colors.white;
+                  final textColor = isDark ? Colors.white : Colors.black87;
+                  final subtitleColor =
+                      isDark ? Colors.grey[400] : Colors.grey[600];
+
+                  // Calculate time remaining
+                  String timeRemaining = '';
+                  if (goal.targetDate != null) {
+                    final daysLeft =
+                        goal.targetDate!.difference(DateTime.now()).inDays;
+                    timeRemaining =
+                        daysLeft > 0 ? '$daysLeft days left' : 'Due today';
+                  }
+
+                  return Container(
+                    width:
+                        280, // Increased width for better display and visibility
+                    margin: const EdgeInsets.only(right: 16),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: goal.color.withOpacity(0.2),
+                          blurRadius: 12,
+                          offset: const Offset(0, 5),
                         ),
                       ],
                     ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap:
+                            () => HomeActions.onSavingsTap(context, goal.title),
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [cardColor!, cardColor],
+                            ),
+                            border: Border.all(
+                              color: goal.color.withOpacity(0.3),
+                              width: 1.5,
+                            ),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: Stack(
+                              children: [
+                                // Decorative elements
+                                Positioned(
+                                  top: -20,
+                                  right: -20,
+                                  child: Container(
+                                    width: 100,
+                                    height: 100,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: goal.color.withOpacity(0.1),
+                                    ),
+                                  ),
+                                ),
+                                Positioned(
+                                  bottom: -30,
+                                  left: -30,
+                                  child: Container(
+                                    width: 80,
+                                    height: 80,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: goal.color.withOpacity(0.1),
+                                    ),
+                                  ),
+                                ),
+                                // Content
+                                Padding(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      // Header with icon
+                                      Row(
+                                        children: [
+                                          // Icon with gradient background
+                                          Container(
+                                            padding: const EdgeInsets.all(10),
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                begin: Alignment.topLeft,
+                                                end: Alignment.bottomRight,
+                                                colors: [
+                                                  goal.color.withOpacity(0.7),
+                                                  goal.color.withOpacity(0.3),
+                                                ],
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: goal.color.withOpacity(
+                                                    0.3,
+                                                  ),
+                                                  blurRadius: 8,
+                                                  offset: const Offset(0, 3),
+                                                ),
+                                              ],
+                                            ),
+                                            child: Icon(
+                                              Icons.savings,
+                                              color: Colors.white,
+                                              size: 18,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          // Title with improved typography
+                                          Expanded(
+                                            child: Text(
+                                              goal.title,
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold,
+                                                color: textColor,
+                                                letterSpacing: 0.5,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16),
+                                      // Amount display with modern styling
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'Saved',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: subtitleColor,
+                                                  letterSpacing: 0.3,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                '₹${goal.currentAmount.toStringAsFixed(0)}',
+                                                style: TextStyle(
+                                                  fontSize: 20,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.green,
+                                                  letterSpacing: 0.5,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.end,
+                                            children: [
+                                              Text(
+                                                'Target',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: subtitleColor,
+                                                  letterSpacing: 0.3,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                '₹${goal.targetAmount.toStringAsFixed(0)}',
+                                                style: TextStyle(
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: textColor,
+                                                  letterSpacing: 0.5,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16),
+                                      // Progress section
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          // Progress percentage with pill background
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: goal.color.withOpacity(
+                                                0.2,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            child: Text(
+                                              '${(goal.progress * 100).toStringAsFixed(0)}%',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                color: goal.color,
+                                              ),
+                                            ),
+                                          ),
+                                          // Time remaining badge
+                                          if (goal.targetDate != null)
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 10,
+                                                    vertical: 4,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color:
+                                                    isDark
+                                                        ? Colors.black12
+                                                        : Colors.white10,
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border: Border.all(
+                                                  color: goal.color.withOpacity(
+                                                    0.2,
+                                                  ),
+                                                  width: 1,
+                                                ),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons
+                                                        .calendar_today_outlined,
+                                                    size: 10,
+                                                    color: subtitleColor,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    timeRemaining,
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color: subtitleColor,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 10),
+                                      // Enhanced progress bar
+                                      Stack(
+                                        children: [
+                                          // Background
+                                          Container(
+                                            height: 8,
+                                            decoration: BoxDecoration(
+                                              color:
+                                                  isDark
+                                                      ? Colors.grey[700]
+                                                      : Colors.grey[200],
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                          ),
+                                          // Progress
+                                          Container(
+                                            height: 8,
+                                            width:
+                                                (280 - 40) *
+                                                goal.progress.clamp(
+                                                  0.0,
+                                                  1.0,
+                                                ), // Account for padding
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                begin: Alignment.centerLeft,
+                                                end: Alignment.centerRight,
+                                                colors: [
+                                                  goal.color.withOpacity(0.7),
+                                                  goal.color,
+                                                ],
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: goal.color.withOpacity(
+                                                    0.3,
+                                                  ),
+                                                  blurRadius: 4,
+                                                  offset: const Offset(0, 2),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
       ],
     );
   }
@@ -1224,10 +1714,23 @@ class _HomeScreenState extends State<HomeScreen> {
     final isDark = theme.brightness == Brightness.dark;
     final primaryColor = const Color(0xFF4066FF);
 
+    // Debug logging for transaction counts
+    final incomeCount =
+        financeService.transactions
+            .where((t) => t.type == TransactionType.income)
+            .length;
+    final expenseCount =
+        financeService.transactions
+            .where((t) => t.type == TransactionType.expense)
+            .length;
+    print(
+      '📊 Transactions in UI: ${financeService.transactions.length} (Income: $incomeCount, Expense: $expenseCount)',
+    );
+
     // Sort transactions by date (newest first)
     final recentTransactions =
-    financeService.transactions.toList()
-      ..sort((a, b) => b.date.compareTo(a.date));
+        financeService.transactions.toList()
+          ..sort((a, b) => b.date.compareTo(a.date));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1334,14 +1837,14 @@ class _HomeScreenState extends State<HomeScreen> {
           height: 320,
           decoration: BoxDecoration(
             color:
-            isDark ? Colors.grey.shade900.withOpacity(0.3) : Colors.white,
+                isDark ? Colors.grey.shade900.withOpacity(0.3) : Colors.white,
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
                 color:
-                isDark
-                    ? Colors.black.withOpacity(0.3)
-                    : Colors.black.withOpacity(0.05),
+                    isDark
+                        ? Colors.black.withOpacity(0.3)
+                        : Colors.black.withOpacity(0.05),
                 blurRadius: 15,
                 spreadRadius: 1,
                 offset: const Offset(0, 5),
@@ -1353,88 +1856,88 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           child:
-          recentTransactions.isEmpty
-              ? Center(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.receipt_long_outlined,
-                    size: 60,
-                    color:
-                    isDark
-                        ? Colors.grey.shade700
-                        : Colors.grey.shade300,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No transactions yet',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
-                      color:
-                      isDark
-                          ? Colors.grey.shade400
-                          : Colors.grey.shade600,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  GlassContainer(
-                    borderRadius: 12,
-                    blur: 5,
-                    opacity: 0.15,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 10,
-                    ),
-                    child: InkWell(
-                      onTap:
-                          () => _navigateToAddTransaction(
-                        TransactionType.expense,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Row(
+              recentTransactions.isEmpty
+                  ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
-                            Icons.add_circle_outline,
-                            size: 20,
-                            color: isDark ? Colors.white : primaryColor,
+                            Icons.receipt_long_outlined,
+                            size: 60,
+                            color:
+                                isDark
+                                    ? Colors.grey.shade700
+                                    : Colors.grey.shade300,
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(height: 16),
                           Text(
-                            'Add Transaction',
+                            'No transactions yet',
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 18,
                               fontWeight: FontWeight.w500,
                               color:
-                              isDark ? Colors.white : primaryColor,
+                                  isDark
+                                      ? Colors.grey.shade400
+                                      : Colors.grey.shade600,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          GlassContainer(
+                            borderRadius: 12,
+                            blur: 5,
+                            opacity: 0.15,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 10,
+                            ),
+                            child: InkWell(
+                              onTap:
+                                  () => _navigateToAddTransaction(
+                                    TransactionType.expense,
+                                  ),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.add_circle_outline,
+                                    size: 20,
+                                    color: isDark ? Colors.white : primaryColor,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Add Transaction',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color:
+                                          isDark ? Colors.white : primaryColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ],
                       ),
                     ),
+                  )
+                  : ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: recentTransactions.length,
+                    itemBuilder:
+                        (context, index) => Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          child: _buildTransactionTile(
+                            recentTransactions[index],
+                          ),
+                        ),
                   ),
-                ],
-              ),
-            ),
-          )
-              : ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: recentTransactions.length,
-            itemBuilder:
-                (context, index) => Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 8,
-              ),
-              child: _buildTransactionTile(
-                recentTransactions[index],
-              ),
-            ),
-          ),
         ),
       ],
     );
@@ -1447,9 +1950,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final isIncome = transaction.type == TransactionType.income;
     final color = isIncome ? Colors.green.shade500 : Colors.redAccent.shade400;
     final amountText =
-    isIncome
-        ? '+₹${transaction.amount.toStringAsFixed(2)}'
-        : '-₹${transaction.amount.toStringAsFixed(2)}';
+        isIncome
+            ? '+₹${transaction.amount.toStringAsFixed(2)}'
+            : '-₹${transaction.amount.toStringAsFixed(2)}';
 
     // Format date in a more user-friendly way
     final dateFormatter = DateFormat('MMM d, yyyy');
@@ -1534,7 +2037,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             formattedDate,
                             style: TextStyle(
                               color:
-                              isDark ? Colors.grey[400] : Colors.grey[600],
+                                  isDark ? Colors.grey[400] : Colors.grey[600],
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
                             ),
@@ -1556,7 +2059,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             formattedTime,
                             style: TextStyle(
                               color:
-                              isDark ? Colors.grey[400] : Colors.grey[600],
+                                  isDark ? Colors.grey[400] : Colors.grey[600],
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
                             ),

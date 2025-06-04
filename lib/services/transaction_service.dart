@@ -1,3 +1,4 @@
+import 'dart:convert';
 import '../models/finance_models.dart';
 import 'api_service.dart';
 import '../app_config.dart';
@@ -26,9 +27,29 @@ class TransactionService {
       if (data != null && data['success'] == true && data['data'] != null) {
         final List<dynamic> transactionsJson = data['data'];
         print('✅ Successfully fetched ${transactionsJson.length} transactions');
-        return transactionsJson
-            .map((json) => _convertBackendTransaction(json))
-            .toList();
+        
+        // Count income and expense transactions for debugging
+        int incomeCount = 0;
+        int expenseCount = 0;
+        
+        for (var json in transactionsJson) {
+          if (json['type'].toString().toLowerCase() == 'income') {
+            incomeCount++;
+          } else {
+            expenseCount++;
+          }
+        }
+        
+        print('📊 Transaction breakdown - Income: $incomeCount, Expense: $expenseCount');
+        
+        // Convert and return transactions
+        final transactions = transactionsJson.map((json) {
+          final transaction = _convertBackendTransaction(json);
+          print('🔄 Converted transaction: ${transaction.title}, Type: ${transaction.type.name}, Amount: ${transaction.amount}');
+          return transaction;
+        }).toList();
+        
+        return transactions;
       } else {
         print('❌ API response format issue: ${data?.toString() ?? 'null response'}');
       }
@@ -62,8 +83,13 @@ class TransactionService {
   // Create a new transaction
   static Future<Transaction?> createTransaction(Transaction transaction) async {
     try {
-      print('Creating transaction at: ${ApiConfig.transactions}');
-      print('Transaction data: ${_convertToBackendFormat(transaction)}');
+      print('📊 TRANSACTION DEBUG: Starting transaction creation');
+      print('📊 API Endpoint: ${ApiConfig.transactions}');
+      
+      // Convert transaction to backend format
+      final transactionData = _convertToBackendFormat(transaction);
+      print('📊 Transaction data to send: ${transactionData.toString()}');
+      print('📊 Transaction JSON: ${jsonEncode(transactionData)}');
       
       // Check if auth token exists before making the request
       final prefs = await SharedPreferences.getInstance();
@@ -74,9 +100,12 @@ class TransactionService {
       }
       
       print('🔑 Using auth token: ${token.substring(0, token.length > 10 ? 10 : token.length)}...');
+      
+      // Make a single API call to create the transaction
+      print('📊 Making API request to create transaction');
       final data = await ApiService.post(
         ApiConfig.transactions,
-        _convertToBackendFormat(transaction),
+        transactionData,
       );
 
       if (data != null && data['success'] == true && data['data'] != null) {
@@ -85,6 +114,9 @@ class TransactionService {
       }
 
       print('❌ Failed to create transaction: ${data?['message'] ?? 'Unknown error'}');
+      if (data != null) {
+        print('📊 Full response data: $data');
+      }
       return null;
     } catch (e) {
       print('❌ Error creating transaction: $e');
@@ -202,15 +234,23 @@ class TransactionService {
     TransactionCategory category;
     try {
       final categoryStr = json['category'] as String;
-      category = TransactionCategory.values.firstWhere(
-        (e) => e.name == categoryStr,
-        orElse:
-            () =>
-                json['type'] == 'income'
-                    ? TransactionCategory.other_income
-                    : TransactionCategory.other_expense,
-      );
+      final typeStr = (json['type'] as String).toLowerCase();
+      
+      // First try to find an exact category match
+      try {
+        category = TransactionCategory.values.firstWhere(
+          (e) => e.name.toLowerCase() == categoryStr.toLowerCase(),
+        );
+      } catch (_) {
+        // If no exact match, assign a default based on transaction type
+        if (typeStr == 'income') {
+          category = TransactionCategory.other_income;
+        } else {
+          category = TransactionCategory.other_expense;
+        }
+      }
     } catch (_) {
+      // Fallback if any error occurs
       category = TransactionCategory.other_expense;
     }
 
@@ -218,11 +258,17 @@ class TransactionService {
     TransactionType type;
     try {
       final typeStr = json['type'] as String;
-      type = TransactionType.values.firstWhere(
-        (e) => e.name == typeStr,
-        orElse: () => TransactionType.expense,
-      );
+      // Check if the type is income or expense directly from the string
+      if (typeStr.toLowerCase() == 'income') {
+        type = TransactionType.income;
+      } else {
+        type = TransactionType.values.firstWhere(
+          (e) => e.name.toLowerCase() == typeStr.toLowerCase(),
+          orElse: () => TransactionType.expense,
+        );
+      }
     } catch (_) {
+      // Default to expense if there's an error
       type = TransactionType.expense;
     }
 
@@ -240,15 +286,29 @@ class TransactionService {
 
   // Helper method to convert frontend Transaction model to backend format
   static Map<String, dynamic> _convertToBackendFormat(Transaction transaction) {
-    return {
+    // Simplify to the absolute minimum required fields in the exact format expected by the backend
+    final Map<String, dynamic> data = {
       'title': transaction.title,
-      'description': transaction.description,
       'amount': transaction.amount,
       'date': transaction.date.toIso8601String(),
-      'category': transaction.category.name,
-      'type': transaction.type.name,
-      'attachmentPath': transaction.attachmentPath,
+      'type': transaction.type == TransactionType.income ? 'income' : 'expense',
     };
+    
+    // Only add optional fields if they have values
+    if (transaction.description != null && transaction.description!.isNotEmpty) {
+      data['description'] = transaction.description;
+    }
+    
+    // Add category - use the enum name without spaces for backend compatibility
+    // The backend expects enum values like 'other_expense' not 'other expense'
+    data['category'] = transaction.category.toString().split('.').last;
+    
+    // Only add attachmentPath if it exists and isn't empty
+    if (transaction.attachmentPath != null && transaction.attachmentPath!.isNotEmpty) {
+      data['attachmentPath'] = transaction.attachmentPath;
+    }
+    
+    return data;
   }
 }
 

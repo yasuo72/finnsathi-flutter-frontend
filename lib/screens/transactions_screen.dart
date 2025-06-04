@@ -5,6 +5,7 @@ import 'package:animate_do/animate_do.dart';
 import '../services/finance_service.dart';
 import '../models/finance_models.dart';
 import 'add_transaction_screen.dart';
+// Removed unused import
 
 class TransactionsScreen extends StatefulWidget {
   const TransactionsScreen({Key? key}) : super(key: key);
@@ -556,7 +557,17 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       OutlinedButton.icon(
                         onPressed: () {
                           Navigator.pop(context);
-                          // Edit transaction
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => AddTransactionScreen(
+                                type: transaction.type,
+                                transaction: transaction,
+                              ),
+                            ),
+                          ).then((_) {
+                            setState(() {});
+                          });
                         },
                         icon: const Icon(Icons.edit_outlined),
                         label: const Text('Edit'),
@@ -569,8 +580,52 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       ),
                       ElevatedButton.icon(
                         onPressed: () {
-                          Navigator.pop(context);
-                          // Delete transaction
+                          showDialog(
+                            context: context,
+                            builder: (BuildContext dialogContext) {
+                              return AlertDialog(
+                                title: const Text('Delete Transaction'),
+                                content: const Text(
+                                  'Are you sure you want to delete this transaction? This action cannot be undone.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () {
+                                      Navigator.pop(dialogContext);
+                                    },
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () async {
+                                      Navigator.pop(dialogContext);
+                                      Navigator.pop(context);
+                                      
+                                      final financeService = Provider.of<FinanceService>(
+                                        context, 
+                                        listen: false
+                                      );
+                                      
+                                      await financeService.deleteTransaction(transaction.id);
+                                      
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Transaction "${transaction.title}" deleted'),
+                                          backgroundColor: Colors.red,
+                                          duration: const Duration(seconds: 2),
+                                          action: SnackBarAction(
+                                            label: 'OK',
+                                            textColor: Colors.white,
+                                            onPressed: () {},
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
                         },
                         icon: const Icon(Icons.delete_outline),
                         label: const Text('Delete'),

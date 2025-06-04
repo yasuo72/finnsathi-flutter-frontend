@@ -1,4 +1,5 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:http/http.dart' as http;
 
 class ApiConfig {
   // Base URL for the API
@@ -6,10 +7,25 @@ class ApiConfig {
     // Try to get from .env file first
     final envUrl = dotenv.env['API_BASE_URL'];
     
-    // If not found in .env, use Railway backend URL
-    return envUrl ?? 'https://finnsathi-ai-expense-monitor-production.up.railway.app/api';
+    // If not found in .env, use Railway backend URL with explicit https protocol
+    return envUrl ?? 'https://finnsathi-ai-expense-monitor-backend-production.up.railway.app/api';
     // Note: Previous default was 'http://10.0.2.2:5000/api' for Android emulators
     // and 'http://localhost:5000/api' for iOS simulator
+  }
+  
+  // Debug method to test backend connection
+  static Future<bool> testConnection() async {
+    try {
+      final url = Uri.parse(baseUrl.replaceAll('/api', ''));
+      print('Testing connection to: $url');
+      final response = await http.get(url);
+      print('Connection test status: ${response.statusCode}');
+      print('Connection test response: ${response.body.substring(0, response.body.length > 100 ? 100 : response.body.length)}...');
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('Connection test error: $e');
+      return false;
+    }
   }
 
   // Auth endpoints

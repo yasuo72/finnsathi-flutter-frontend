@@ -1,8 +1,15 @@
 // Finsaathi Multi App - Custom Sign Up Screen
+import 'dart:async';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
+import 'package:http/http.dart' as http;
+
 import 'services/theme_service.dart';
 import 'services/navigation_service.dart';
 import 'routing/app_routes.dart';
@@ -16,6 +23,8 @@ import 'services/gamification_service.dart';
 import 'providers/api_providers.dart';
 import 'services/api_service_manager.dart';
 import 'app_config.dart';
+import 'config/api_config.dart';
+import 'services/google_auth_service.dart';
 
 // Define color constants for consistent usage
 const Color kPrimaryColor = Color(0xFF3F51B5); // Indigo for primary actions
@@ -194,46 +203,124 @@ final darkTheme = ThemeData(
   ),
 );
 
+// Platform-specific channel for performance optimizations
+const platform = MethodChannel('com.finsaathi/performance');
+
+// Completer for background initialization
+final Completer<void> _backgroundInitCompleter = Completer<void>();
+
+// Run background initialization tasks
+Future<void> _runBackgroundInit() async {
+  try {
+    // Pre-initialize heavy components in background
+    await AppConfig.initialize();
+
+    // Pre-warm the network connection to backend
+    final apiUrl =
+        'finnsathi-ai-expense-monitor-backend-production.up.railway.app';
+    await http.get(Uri.https(apiUrl, '/health'));
+
+    _backgroundInitCompleter.complete();
+  } catch (e) {
+    // Complete even if there's an error to avoid blocking the app
+    _backgroundInitCompleter.complete();
+    debugPrint('Background initialization error: $e');
+  }
+}
+
 Future<void> main() async {
-  // Ensure Flutter is initialized before doing anything else
-  WidgetsFlutterBinding.ensureInitialized();
-  
-  // For stability, set preferred orientation
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
-  
-  // Add some delay to initialize properly
-  await Future.delayed(const Duration(milliseconds: 200));
-  
+  // Start measuring app startup time
+  final startTime = DateTime.now().millisecondsSinceEpoch;
+
+  // Ensure Flutter is initialized with optimized settings
+  final binding = WidgetsFlutterBinding.ensureInitialized();
+
+  // Apply aggressive optimizations for faster startup
+  binding.deferFirstFrame();
+
+  // Start background initialization immediately
+  _runBackgroundInit();
+
+  // Configure Flutter engine for performance
+  binding.renderView.automaticSystemUiAdjustment = false;
+
+  // Set system UI overlay style to make navigation bar match theme
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      // Make the status bar transparent and use light icons for dark theme
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      statusBarBrightness: Brightness.dark,
+      // Make the navigation bar dark with light icons
+      systemNavigationBarColor:
+          kDarkBackground, // Use dark background color instead of transparent
+      systemNavigationBarDividerColor: Colors.transparent,
+      systemNavigationBarIconBrightness: Brightness.light,
+      systemNavigationBarContrastEnforced:
+          false, // Disable contrast enforcement
+    ),
+  );
+
+  // Configure system UI mode for proper display
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.manual,
+    overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom],
+  );
+
+  // Run critical UI setup in parallel
+  final futures = <Future>[];
+
+  // Set preferred orientation
+  // futures.add(SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]));
+
+  // Optimize system UI mode for faster startup
+  // futures.add(SystemChrome.setEnabledSystemUIMode(
+  //   SystemUiMode.edgeToEdge,
+  //   overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom],
+  // ));
+
   // Load environment variables
-  await dotenv.load();
-  
-  // Initialize AppConfig
-  await AppConfig.initialize();
-  
+  futures.add(dotenv.load());
+
+  // Wait for critical UI configurations to complete
+  await Future.wait(futures);
+
+  // Initialize services in parallel for faster startup
+  final financeService = FinanceService();
+  final themeService = ThemeService();
+  final walletService = WalletService();
+  final profileService = ProfileService();
+  final navigationService = NavigationService();
+  final apiServiceManager = ApiServiceManager();
+
   // Use real API data to connect with Railway backend
   if (AppConfig.useMockData) {
-    await AppConfig.setUseMockData(false);
+    AppConfig.setUseMockData(false); // Don't await this
   }
 
-  // Initialize FinanceService
-  final financeService = FinanceService();
-  await financeService.init();
+  // Notify native code that Flutter is ready
+  try {
+    await platform.invokeMethod('optimizePerformance');
+  } catch (e) {
+    // Ignore errors, this is just an optimization
+  }
 
-  // Initialize ThemeService
-  final themeService = ThemeService();
-  await themeService.init();
+  // Allow first frame to be drawn
+  binding.allowFirstFrame();
 
-  // Initialize WalletService
-  final walletService = WalletService();
-  
-  // Initialize ProfileService
-  final profileService = ProfileService();
-  
-  // Initialize API Service Manager
-  final apiServiceManager = ApiServiceManager();
-  // Don't await this as it will be initialized when needed
+  // Log startup time
+  final endTime = DateTime.now().millisecondsSinceEpoch;
+  debugPrint('App startup time: ${endTime - startTime} ms');
+
+  // Start initialization in parallel
+  final financeInit = financeService.init();
+  final themeInit = themeService.init();
+
+  // Wait for critical services to initialize
+  await Future.wait([financeInit, themeInit]);
+
+  // Create AI chat service after finance service is initialized
+  final aiChatService = AIChatService(financeService);
 
   // Run the app with error handling
   FlutterError.onError = (FlutterErrorDetails details) {
@@ -250,32 +337,24 @@ Future<void> main() async {
           create: (context) => financeService,
         ),
         ChangeNotifierProvider<ThemeService>(create: (context) => themeService),
-        // Create AIChatService with the finance service instance
-        ProxyProvider<FinanceService, AIChatService>(
-          update: (context, financeService, previous) => 
-              previous ?? AIChatService(financeService),
+        ChangeNotifierProvider<NavigationService>(
+          create: (context) => navigationService,
         ),
-        // Add WalletService for card and cash management
-        ChangeNotifierProxyProvider<FinanceService, WalletService>(
-          create: (_) => walletService,
-          update: (_, financeService, walletService) {
-            walletService?.setFinanceService(financeService);
-            return walletService!;
-          },
-        ),
-        // Add ProfileService for user profile management
         ChangeNotifierProvider<ProfileService>(
           create: (context) => profileService,
         ),
-        // Add Navigation Service for app-wide navigation
-        Provider<NavigationService>(
-          create: (context) => NavigationService(),
+        ChangeNotifierProvider<WalletService>(
+          create: (context) => walletService,
         ),
-        // Add GamificationService for gamification features
+        ChangeNotifierProvider<AIChatService>(
+          create: (context) => aiChatService,
+        ),
         ChangeNotifierProvider<GamificationService>(
           create: (context) {
-            final profileService = Provider.of<ProfileService>(context, listen: false);
-            final financeService = Provider.of<FinanceService>(context, listen: false);
+            final financeService = Provider.of<FinanceService>(
+              context,
+              listen: false,
+            );
             return GamificationService(profileService, financeService);
           },
         ),
@@ -298,20 +377,67 @@ class FinsaathiApp extends StatefulWidget {
   FinsaathiAppState createState() => FinsaathiAppState();
 }
 
-class FinsaathiAppState extends State<FinsaathiApp> with WidgetsBindingObserver {
+class FinsaathiAppState extends State<FinsaathiApp>
+    with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    
-    // Pre-warm image cache to avoid stutters
-    PaintingBinding.instance.imageCache.maximumSize = 100;
-    
+
+    // Initialize GoogleAuthService with better error handling
+    try {
+      GoogleAuthService.initialize()
+          .then((_) {
+            debugPrint('⚠️ GoogleAuthService initialized successfully');
+          })
+          .catchError((error) {
+            debugPrint('❌ Error initializing GoogleAuthService: $error');
+          });
+    } catch (e) {
+      debugPrint('❌ Critical error initializing GoogleAuthService: $e');
+    }
+
+    // Wait for the background initialization to complete
+    _backgroundInitCompleter.future.then((_) {
+      debugPrint('Background initialization completed');
+      // Pre-warm image cache to avoid stutters
+      PaintingBinding.instance.imageCache.maximumSize = 100;
+    });
+
     // Initialize API services
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Test backend connection first
+      final isConnected = await ApiConfig.testConnection();
+      print('Backend connection test result: $isConnected');
+
+      if (!isConnected) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Cannot connect to the backend server. Please check your internet connection or try again later.',
+              style: TextStyle(color: Colors.white),
+            ),
+            backgroundColor: Colors.red.shade800,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: () async {
+                final retryResult = await ApiConfig.testConnection();
+                if (retryResult) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Connection successful!')),
+                  );
+                }
+              },
+            ),
+          ),
+        );
+      }
+
       // Initialize API Service Manager after the first frame
       Provider.of<ApiServiceManager>(context, listen: false).initializeData();
-      
+
       // Show notification about mock data mode if enabled
       if (AppConfig.useMockData) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -332,13 +458,13 @@ class FinsaathiAppState extends State<FinsaathiApp> with WidgetsBindingObserver 
       }
     });
   }
-  
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
-  
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Handle app lifecycle changes to improve stability
@@ -348,18 +474,39 @@ class FinsaathiAppState extends State<FinsaathiApp> with WidgetsBindingObserver 
       PaintingBinding.instance.imageCache.clearLiveImages();
     }
   }
+
   @override
   Widget build(BuildContext context) {
     // Get ThemeService instance from provider
     final themeService = Provider.of<ThemeService>(context);
-    final navigationService = Provider.of<NavigationService>(context, listen: false);
+    final navigationService = Provider.of<NavigationService>(
+      context,
+      listen: false,
+    );
+
+    // Ensure system UI settings are consistently applied
+    final isDarkMode = themeService.isDarkMode;
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(
+        // Make the status bar transparent and use appropriate icons based on theme
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness:
+            isDarkMode ? Brightness.light : Brightness.dark,
+        statusBarBrightness: isDarkMode ? Brightness.dark : Brightness.light,
+        // Make the navigation bar transparent with appropriate icons based on theme
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarDividerColor: Colors.transparent,
+        systemNavigationBarIconBrightness:
+            isDarkMode ? Brightness.light : Brightness.dark,
+      ),
+    );
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Finsaathi Multi',
       theme: lightTheme,
       darkTheme: darkTheme,
-      themeMode: themeService.isDarkMode ? ThemeMode.dark : ThemeMode.light,
+      themeMode: isDarkMode ? ThemeMode.dark : ThemeMode.light,
       // Add navigation key from service
       navigatorKey: navigationService.navigatorKey,
       // Reduce animations slightly to avoid OpenGL issues

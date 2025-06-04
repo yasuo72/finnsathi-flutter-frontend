@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../app_config.dart';
+import '../config/api_config.dart';
+import 'auth_state_service.dart';
 
 class ApiService {
   // Base URL for API requests
@@ -26,12 +29,34 @@ class ApiService {
     return headers;
   }
 
-  // Get auth token from shared preferences
+  // Get auth token from shared preferences with enhanced fallback options
   static Future<String?> _getAuthToken() async {
+    // Use AuthStateService to get the token for consistency
+    final token = await AuthStateService.getAuthToken();
+    
+    // If we have a valid token, return it with debug info
+    if (token != null && token.isNotEmpty) {
+      print('🔑 Using primary auth token: ${token.substring(0, token.length > 10 ? 10 : token.length)}...');
+      return token;
+    }
+    
+    // If primary token is missing, try all possible fallbacks
+    print('⚠️ Primary token missing - trying fallbacks');
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('auth_token');
-    print('🔑 Getting auth token: ${token != null ? "${token.substring(0, token.length > 10 ? 10 : token.length)}..." : "null"}');
-    return token;
+    
+    // Try all possible token keys in order of preference
+    final possibleKeys = ['auth_token', 'token', 'access_token', 'jwt_token'];
+    
+    for (final key in possibleKeys) {
+      final fallbackToken = prefs.getString(key);
+      if (fallbackToken != null && fallbackToken.isNotEmpty) {
+        print('🔄 Found fallback token in "$key"');
+        return fallbackToken;
+      }
+    }
+    
+    print('❌ No valid auth token found in any location');
+    return null;
   }
 
   // Save auth token to shared preferences
@@ -48,29 +73,79 @@ class ApiService {
 
   // Generic GET request
   static Future<dynamic> get(String url, {bool requiresAuth = true}) async {
-    // Use mock data if enabled
-    if (AppConfig.useMockData) {
-      return _getMockResponse(url);
+  // Use mock data if enabled
+  if (AppConfig.useMockData) {
+    return _getMockResponse(url);
+  }
+  
+  try {
+    print('🌐 API GET Request to: $url');
+    
+    // Validate URL format
+    if (!url.startsWith('http')) {
+      print('⚠️ URL does not have protocol, adding https://');
+      if (!url.startsWith('/')) {
+        url = 'https://$url';
+      } else {
+        url = 'https://finnsathi-ai-expense-monitor-backend-production.up.railway.app$url';
+      }
+    }
+    print('🌐 Normalized URL: $url');
+    
+    // Get auth headers with improved token handling
+    final headers = await _getHeaders(requiresAuth: requiresAuth);
+    if (requiresAuth && (headers['Authorization'] == null || headers['Authorization']!.isEmpty)) {
+      print('⚠️ Authorization header is missing or empty!');
+      // Try to refresh the token from shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token') ?? prefs.getString('token');
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+        print('🔄 Refreshed Authorization header with token from SharedPreferences');
+      } else {
+        print('❌ Failed to refresh Authorization header - no valid token found');
+      }
+    }
+    print('🔑 Headers: $headers');
+    
+    // Make the request with timeout
+    final response = await http.get(Uri.parse(url), headers: headers)
+        .timeout(const Duration(seconds: 15), onTimeout: () {
+      print('⏰ Request timed out after 15 seconds');
+      throw TimeoutException('Request timed out after 15 seconds');
+    });
+    
+    print('📥 Response Status: ${response.statusCode}');
+    
+    // Log response body with better formatting
+    if (response.body.isNotEmpty) {
+      try {
+        final bodyPreview = response.body.length > 500 
+            ? "${response.body.substring(0, 500)}..."
+            : response.body;
+        print('📥 Response Body: $bodyPreview');
+        
+        // Try to parse as JSON for better logging
+        final dynamic jsonBody = jsonDecode(response.body);
+        if (jsonBody is Map && jsonBody.containsKey('success')) {
+          print('📥 Success: ${jsonBody['success']}');
+        }
+      } catch (e) {
+        print('⚠️ Could not parse response as JSON: $e');
+      }
+    } else {
+      print('⚠️ Response body is empty');
     }
     
-    try {
-      print('🌐 API GET Request to: $url');
-      
-      final headers = await _getHeaders(requiresAuth: requiresAuth);
-      print('🔑 Headers: $headers');
-      
-      final response = await http.get(Uri.parse(url), headers: headers);
-      
-      print('📥 Response Status: ${response.statusCode}');
-      print('📥 Response Body: ${response.body.length > 500 ? "${response.body.substring(0, 500)}..." : response.body}');
-      
-      return _handleResponse(response);
-    } catch (e) {
-      print('❌ API Error: $e');
-      // If real API call fails, fall back to mock data
-      return _getMockResponse(url);
-    }
+    return _handleResponse(response);
+  } catch (e, stackTrace) {
+    print('❌ API Error: $e');
+    print('📜 Stack trace: $stackTrace');
+    
+    // If real API call fails, fall back to mock data
+    return _getMockResponse(url);
   }
+}
 
   // Generic POST request
   static Future<dynamic> post(
@@ -88,7 +163,29 @@ class ApiService {
 
     try {
       print('🌐 API POST Request to: $url');
-      print('📦 Request Body: ${jsonEncode(body)}');
+      
+      // Ensure body has required fields for savings goals
+      if (url.contains('savings-goals') && body is Map<String, dynamic>) {
+        // Ensure required fields for savings goals
+        if (!body.containsKey('title') || body['title'] == null || body['title'].toString().isEmpty) {
+          body['title'] = 'Unnamed Goal';
+        }
+        if (!body.containsKey('targetAmount') || body['targetAmount'] == null) {
+          body['targetAmount'] = 0.0;
+        }
+        if (!body.containsKey('currentAmount') || body['currentAmount'] == null) {
+          body['currentAmount'] = 0.0;
+        }
+        
+        // Add 'name' field which is required by the backend
+        // The backend expects 'name' instead of or in addition to 'title'
+        body['name'] = body['title'];
+        
+        print('💡 Enhanced request body with required fields for savings goal');
+      }
+      
+      final bodyJson = jsonEncode(body);
+      print('📦 Request Body: $bodyJson');
       
       final headers = await _getHeaders(requiresAuth: requiresAuth);
       print('🔑 Headers: $headers');
@@ -96,11 +193,31 @@ class ApiService {
       final response = await http.post(
         Uri.parse(url),
         headers: headers,
-        body: jsonEncode(body),
+        body: bodyJson,
       );
       
       print('📥 Response Status: ${response.statusCode}');
       print('📥 Response Body: ${response.body}');
+      
+      // Enhanced error handling for common HTTP errors
+      if (response.statusCode >= 400) {
+        print('❌ HTTP Error ${response.statusCode}: ${response.reasonPhrase}');
+        try {
+          final errorJson = jsonDecode(response.body);
+          print('❌ Error details: ${errorJson['message'] ?? errorJson['error'] ?? 'Unknown error'}');
+          
+          // For 400 Bad Request errors, log more details about the request
+          if (response.statusCode == 400) {
+            print('⚠️ Bad Request Details:');
+            print('  - URL: $url');
+            print('  - Headers: $headers');
+            print('  - Body: $bodyJson');
+            print('  - Response: ${response.body}');
+          }
+        } catch (e) {
+          print('❌ Could not parse error response: $e');
+        }
+      }
       
       return _handleResponse(response);
     } catch (e) {
@@ -159,21 +276,65 @@ class ApiService {
     }
 
     try {
+      // Normalize URL to ensure it's properly formatted
+      if (!url.startsWith('http')) {
+        // If URL doesn't start with http/https, assume it's a relative path
+        if (!url.startsWith('/')) {
+          url = '/$url';
+        }
+        url = ApiConfig.baseUrl + url;
+      }
+      
       print('🌐 API DELETE Request to: $url');
       
+      // Get auth token with fallback mechanism
       final headers = await _getHeaders(requiresAuth: requiresAuth);
+      
+      if (requiresAuth && (headers['Authorization'] == null || headers['Authorization']!.isEmpty)) {
+        // Try alternative token keys if the primary one failed
+        final prefs = await SharedPreferences.getInstance();
+        final alternativeToken = prefs.getString('token');
+        
+        if (alternativeToken != null && alternativeToken.isNotEmpty) {
+          headers['Authorization'] = 'Bearer $alternativeToken';
+          print('🔄 Using alternative token key');
+        } else {
+          print('⚠️ No valid auth token found for DELETE request');
+        }
+      }
+      
       print('🔑 Headers: $headers');
       
-      final response = await http.delete(Uri.parse(url), headers: headers);
+      // Add timeout to prevent hanging requests
+      final response = await http.delete(
+        Uri.parse(url), 
+        headers: headers
+      ).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          print('⏱️ DELETE request timed out after 15 seconds');
+          throw TimeoutException('Request timed out');
+        }
+      );
       
       print('📥 Response Status: ${response.statusCode}');
       print('📥 Response Body: ${response.body}');
       
+      // Special handling for 401 Unauthorized - token might be expired
+      if (response.statusCode == 401) {
+        print('🔒 Authentication failed. Token might be expired.');
+        // Here you could implement token refresh logic if needed
+      }
+      
       return _handleResponse(response);
     } catch (e) {
-      print('❌ API Error: $e');
-      // If real API call fails, fall back to mock data
-      return _getMockResponse(url);
+      print('❌ API DELETE Error: $e');
+      // Return error information instead of mock data for better debugging
+      return {
+        'success': false,
+        'message': 'Error during DELETE request: $e',
+        'error': e.toString(),
+      };
     }
   }
 

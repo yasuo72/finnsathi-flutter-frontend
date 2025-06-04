@@ -149,32 +149,106 @@ class Transaction {
     return {
       'id': id,
       'title': title,
-      'description': description,
+      'description': description ?? '',
       'amount': amount,
       'date': date.toIso8601String(),
-      'category': category.toString(),
-      'type': type.toString(),
-      'attachmentPath': attachmentPath,
+      // Use just the name part of the enum (after the dot)
+      'category': category.name,
+      // Use just the name part of the enum (after the dot)
+      'type': type.name,
+      // Only include attachmentPath if it's not null
+      if (attachmentPath != null) 'attachmentPath': attachmentPath,
     };
   }
   
   factory Transaction.fromJson(Map<String, dynamic> json) {
+    // Handle MongoDB _id field or regular id field
+    final id = json['_id'] ?? json['id'] ?? '';
+    
+    // Parse amount safely - handle both numeric and string values
+    double amount;
+    final rawAmount = json['amount'];
+    if (rawAmount is double) {
+      amount = rawAmount;
+    } else if (rawAmount is int) {
+      amount = rawAmount.toDouble();
+    } else if (rawAmount is String) {
+      amount = double.tryParse(rawAmount) ?? 0.0;
+    } else {
+      amount = 0.0;
+    }
+    
+    // Parse date safely
+    DateTime date;
+    try {
+      date = DateTime.parse(json['date']);
+    } catch (e) {
+      date = DateTime.now();
+      print('Error parsing date: ${json['date']}');
+    }
+    
+    // Parse category - handle both full enum string and just the name
+    TransactionCategory category;
+    final categoryValue = json['category'];
+    if (categoryValue is String) {
+      try {
+        // First try to match by name (e.g., 'food', 'salary')
+        category = TransactionCategory.values.firstWhere(
+          (e) => e.name.toLowerCase() == categoryValue.toLowerCase(),
+          orElse: () {
+            // Then try to match by full enum string (e.g., 'TransactionCategory.food')
+            return TransactionCategory.values.firstWhere(
+              (e) => e.toString().toLowerCase() == categoryValue.toLowerCase(),
+              orElse: () {
+                // Default based on transaction type
+                final typeStr = json['type']?.toString().toLowerCase() ?? '';
+                return typeStr == 'income' ? 
+                  TransactionCategory.other_income : 
+                  TransactionCategory.other_expense;
+              }
+            );
+          }
+        );
+      } catch (e) {
+        print('Error parsing category: $categoryValue');
+        category = TransactionCategory.other_expense;
+      }
+    } else {
+      category = TransactionCategory.other_expense;
+    }
+    
+    // Parse transaction type - handle both full enum string and just the name
+    TransactionType type;
+    final typeValue = json['type'];
+    if (typeValue is String) {
+      final typeStr = typeValue.toLowerCase();
+      if (typeStr == 'income') {
+        type = TransactionType.income;
+      } else if (typeStr == 'expense') {
+        type = TransactionType.expense;
+      } else {
+        try {
+          type = TransactionType.values.firstWhere(
+            (e) => e.name.toLowerCase() == typeStr || e.toString().toLowerCase() == typeStr,
+            orElse: () => TransactionType.expense
+          );
+        } catch (e) {
+          print('Error parsing transaction type: $typeValue');
+          type = TransactionType.expense;
+        }
+      }
+    } else {
+      type = TransactionType.expense;
+    }
+    
     return Transaction(
-      id: json['id'],
-      title: json['title'],
+      id: id,
+      title: json['title'] ?? 'Untitled',
       description: json['description'],
-      amount: json['amount'],
-      date: DateTime.parse(json['date']),
-      category: TransactionCategory.values.firstWhere(
-        (e) => e.toString() == json['category'],
-        orElse: () => json['type'] == TransactionType.income.toString() 
-            ? TransactionCategory.other_income 
-            : TransactionCategory.other_expense
-      ),
-      type: TransactionType.values.firstWhere(
-        (e) => e.toString() == json['type'],
-        orElse: () => TransactionType.expense
-      ),
+      amount: amount,
+      date: date,
+      category: category,
+      type: type,
       attachmentPath: json['attachmentPath'],
     );
   }

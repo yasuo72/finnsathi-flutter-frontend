@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:glassmorphism/glassmorphism.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../widgets/custom_text_field.dart';
 import 'signup_screen_new.dart';
@@ -475,71 +474,42 @@ class _SignInScreenState extends State<SignInScreen>
                           });
                           
                           try {
-                            // Create a GoogleSignIn instance
-                            final GoogleSignIn googleSignIn = GoogleSignIn(
-                              scopes: ['email', 'profile'],
-                              serverClientId: '245798805380-od382nvaj7jg2jbodv5lp9033lg5f754.apps.googleusercontent.com',
-                            );
+                            // Use the GoogleAuthService singleton instead of creating a new instance
+                            final googleAuthService = GoogleAuthService();
                             
-                            // First try to sign out to ensure a clean state
-                            try {
-                              await googleSignIn.signOut();
-                              debugPrint('🔑 Signed out previous Google session for clean state');
-                            } catch (e) {
-                              debugPrint('⚠️ Error signing out previous Google session (can be ignored): $e');
-                            }
-                            
-                            // Now attempt to sign in
-                            debugPrint('📱 Attempting Google Sign-In...');
-                            final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
-                            
-                            if (googleUser == null) {
-                              debugPrint('❌ Google Sign-In was cancelled by user');
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Sign-in was cancelled'),
-                                    duration: Duration(seconds: 2),
-                                  ),
+                            // Show loading dialog
+                            showDialog(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (BuildContext context) {
+                                return const Center(
+                                  child: CircularProgressIndicator(),
                                 );
-                              }
-                              return;
-                            }
-                            
-                            // User authenticated with Google, now get auth tokens
-                            debugPrint('🔑 Getting Google authentication tokens...');
-                            final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-                            
-                            if (googleAuth.idToken == null) {
-                              throw Exception('Failed to get ID token from Google');
-                            }
-                            
-                            debugPrint('✅ Got Google auth tokens: ID token length: ${googleAuth.idToken?.length ?? 0}');
-                            
-                            // Authenticate with backend
-                            debugPrint('🔄 Authenticating with backend...');
-                            final success = await GoogleAuthService.authenticateWithBackend(
-                              googleUser: googleUser,
-                              idToken: googleAuth.idToken!,
-                              accessToken: googleAuth.accessToken!,
+                              },
                             );
                             
-                            if (success) {
-                              debugPrint('✅ Backend authentication successful');
-                              if (mounted) {
+                            // Use the signInWithGoogle method from GoogleAuthService
+                            final success = await googleAuthService.signInWithGoogle(
+                              context,
+                              onSuccess: () {
+                                debugPrint('✅ Google Sign-In successful');
                                 // Navigate to home screen on successful authentication
                                 Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
-                              }
-                            } else {
-                              debugPrint('❌ Backend authentication failed');
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Authentication with server failed. Please try again.'),
-                                    duration: Duration(seconds: 3),
-                                  ),
-                                );
-                              }
+                              },
+                            );
+                            
+                            // Close loading dialog
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                            }
+                            
+                            if (!success && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Authentication failed. Please try again.'),
+                                  duration: Duration(seconds: 3),
+                                ),
+                              );
                             }
                           } catch (e) {
                             debugPrint('❌ Error during Google Sign-In: $e');

@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/finance_models.dart';
 import 'package:flutter/material.dart';
 import 'transaction_service.dart';
+import 'budget_service.dart';
+import 'savings_goal_service.dart';
 import '../app_config.dart';
 
 class FinanceService extends ChangeNotifier {
@@ -47,8 +49,68 @@ class FinanceService extends ChangeNotifier {
 
   // Initialize with stored data
   Future<void> init() async {
-    await _loadData();
+    final prefs = await SharedPreferences.getInstance();
+    final loginSuccessful = prefs.getBool('login_successful') ?? false;
+    final loginTimestamp = prefs.getInt('login_timestamp') ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    
+    // If login was successful in the last 10 seconds, force refresh data
+    if (loginSuccessful && (now - loginTimestamp < 10000)) {
+      print('🔄 Recent login detected, forcing data refresh');
+      await _loadData(forceRefresh: true);
+      // Reset the login flag
+      await prefs.setBool('login_successful', false);
+    } else {
+      await _loadData();
+    }
+    
     await _calculateBalance();
+  }
+  
+  // Force refresh data from backend - call this after login
+  Future<void> forceRefreshData() async {
+    print('🔄 Force refreshing finance data from backend');
+    
+    // Clear the force_data_refresh flag if it was set
+    final prefs = await SharedPreferences.getInstance();
+    final shouldForceRefresh = prefs.getBool('force_data_refresh') ?? false;
+    
+    if (shouldForceRefresh) {
+      print('⚠️ Force refresh flag detected - ensuring complete data refresh');
+      // Clear local savings goals to force a complete refresh from backend
+      await prefs.remove('savingsGoals');
+      
+      // Clear the flag after processing
+      await prefs.setBool('force_data_refresh', false);
+    }
+    
+    // Load all data with forced refresh
+    await _loadData(forceRefresh: true);
+    await _calculateBalance();
+    
+    // Double-check savings goals specifically
+    print('🔍 Double-checking savings goals data');
+    try {
+      final backendSavingsGoals = await SavingsGoalService.getAllSavingsGoals();
+      if (backendSavingsGoals.isNotEmpty) {
+        print('✅ Verified ${backendSavingsGoals.length} savings goals from backend');
+        
+        // Keep only local goals that aren't on the backend yet
+        final localOnlySavingsGoals = _savingsGoals
+            .where((g) => g.id.startsWith('local_'))
+            .toList();
+        
+        // Replace all savings goals with backend ones + local-only ones
+        _savingsGoals = [...backendSavingsGoals, ...localOnlySavingsGoals];
+        
+        // Update local storage with the merged list
+        await _updateSavingsGoalsStorage();
+      }
+    } catch (e) {
+      print('❌ Error double-checking savings goals: $e');
+    }
+    
+    notifyListeners();
   }
 
   // Add a new transaction
@@ -172,74 +234,310 @@ class FinanceService extends ChangeNotifier {
 
   // Add a new budget
   Future<void> addBudget(Budget budget) async {
-    _budgets.add(budget);
-    await _updateBudgetsStorage();
-    notifyListeners();
+    try {
+      // Generate a temporary ID if needed
+      if (budget.id.isEmpty) {
+        budget = budget.copyWith(id: 'local_${DateTime.now().millisecondsSinceEpoch}');
+      }
+      
+      // Add to local storage first for immediate UI update
+      _budgets.add(budget);
+      await _updateBudgetsStorage();
+      notifyListeners();
+      
+      // Then save to backend
+      if (!AppConfig.useMockData) {
+        print('💰 Saving budget to backend: ${budget.title}');
+        
+        // Make sure we have a valid auth token before trying to save to backend
+        final prefs = await SharedPreferences.getInstance();
+        final token = prefs.getString('auth_token');
+        if (token == null || token.isEmpty) {
+          print('⚠️ No auth token found. Budget will only be saved locally.');
+          return;
+        }
+        
+        final savedBudget = await BudgetService.createBudget(budget);
+        
+        if (savedBudget != null) {
+          // Replace the local budget with the one from the server (which has a proper ID)
+          final index = _budgets.indexWhere((b) => b.id == budget.id);
+          if (index != -1) {
+            _budgets[index] = savedBudget;
+            await _updateBudgetsStorage();
+            notifyListeners();
+          }
+          print('✅ Budget saved to backend successfully with ID: ${savedBudget.id}');
+        } else {
+          print('❌ Failed to save budget to backend, but kept locally');
+        }
+      }
+    } catch (e) {
+      print('❌ Error adding budget: $e');
+      // Keep the budget locally even if backend save fails
+    }
   }
 
   // Update an existing budget
   Future<void> updateBudget(Budget budget) async {
-    final index = _budgets.indexWhere((b) => b.id == budget.id);
-    if (index != -1) {
-      _budgets[index] = budget;
-      await _updateBudgetsStorage();
-      notifyListeners();
+    try {
+      // Find the index of the budget to update
+      final index = _budgets.indexWhere((b) => b.id == budget.id);
+      
+      if (index != -1) {
+        // Update in local storage first for immediate UI update
+        _budgets[index] = budget;
+        await _updateBudgetsStorage();
+        notifyListeners();
+        
+        // Then update in backend
+        if (!AppConfig.useMockData && !budget.id.startsWith('local_')) {
+          print('💰 Updating budget in backend: ${budget.title}');
+          
+          // Make sure we have a valid auth token before trying to update in backend
+          final prefs = await SharedPreferences.getInstance();
+          final token = prefs.getString('auth_token');
+          if (token == null || token.isEmpty) {
+            print('⚠️ No auth token found. Budget will only be updated locally.');
+            return;
+          }
+          
+          final updatedBudget = await BudgetService.updateBudget(budget);
+          
+          if (updatedBudget != null) {
+            // Replace with the updated version from the server
+            _budgets[index] = updatedBudget;
+            await _updateBudgetsStorage();
+            notifyListeners();
+            print('✅ Budget updated in backend successfully: ${updatedBudget.id}');
+          } else {
+            print('❌ Failed to update budget in backend, but kept local changes');
+          }
+        }
+      } else {
+        print('⚠️ Budget not found in local storage: ${budget.id}');
+      }
+    } catch (e) {
+      print('❌ Error updating budget: $e');
+      // Keep the local changes even if backend update fails
     }
   }
 
   // Delete a budget
   Future<void> deleteBudget(String id) async {
-    _budgets.removeWhere((b) => b.id == id);
-    await _updateBudgetsStorage();
-    notifyListeners();
+    try {
+      print('🗑️ Deleting budget with ID: $id');
+      
+      // Remove from local storage first for immediate UI update
+      _budgets.removeWhere((b) => b.id == id);
+      await _updateBudgetsStorage();
+      notifyListeners();
+      
+      // Then delete from backend if it's not a local-only budget
+      if (!AppConfig.useMockData && !id.startsWith('local_')) {
+        // Make sure we have a valid auth token before trying to delete from backend
+        final prefs = await SharedPreferences.getInstance();
+        final token = prefs.getString('auth_token');
+        if (token == null || token.isEmpty) {
+          print('⚠️ No auth token found. Budget will only be deleted locally.');
+          return;
+        }
+        
+        final success = await BudgetService.deleteBudget(id);
+        if (success) {
+          print('✅ Budget deleted from backend successfully: $id');
+        } else {
+          print('❌ Failed to delete budget from backend, but removed locally');
+        }
+      }
+    } catch (e) {
+      print('❌ Error deleting budget: $e');
+    }
   }
 
   // Add a new savings goal
   Future<void> addSavingsGoal(SavingsGoal goal) async {
-    _savingsGoals.add(goal);
-    await _updateSavingsGoalsStorage();
-    notifyListeners();
+    try {
+      // Generate a temporary ID if needed
+      if (goal.id.isEmpty) {
+        goal = goal.copyWith(id: 'local_${DateTime.now().millisecondsSinceEpoch}');
+      }
+      
+      // Add to local storage first for immediate UI update
+      _savingsGoals.add(goal);
+      await _updateSavingsGoalsStorage();
+      notifyListeners();
+      
+      // Then save to backend
+      if (!AppConfig.useMockData) {
+        print('💰 Saving savings goal to backend: ${goal.title}');
+        
+        // Make sure we have a valid auth token before trying to save to backend
+        final prefs = await SharedPreferences.getInstance();
+        final token = prefs.getString('auth_token');
+        if (token == null || token.isEmpty) {
+          print('⚠️ No auth token found. Savings goal will only be saved locally.');
+          return;
+        }
+        
+        final savedGoal = await SavingsGoalService.createSavingsGoal(goal);
+        
+        if (savedGoal != null) {
+          // Replace the local goal with the one from the server (which has a proper ID)
+          final index = _savingsGoals.indexWhere((g) => g.id == goal.id);
+          if (index != -1) {
+            _savingsGoals[index] = savedGoal;
+            await _updateSavingsGoalsStorage();
+            notifyListeners();
+          }
+          print('✅ Savings goal saved to backend successfully with ID: ${savedGoal.id}');
+        } else {
+          print('❌ Failed to save savings goal to backend, but kept locally');
+        }
+      }
+    } catch (e) {
+      print('❌ Error adding savings goal: $e');
+      // Keep the goal locally even if backend save fails
+    }
   }
 
   // Update an existing savings goal
   Future<void> updateSavingsGoal(SavingsGoal goal) async {
-    final index = _savingsGoals.indexWhere((g) => g.id == goal.id);
-    if (index != -1) {
-      _savingsGoals[index] = goal;
-      await _updateSavingsGoalsStorage();
-      notifyListeners();
+    try {
+      // Find the index of the savings goal to update
+      final index = _savingsGoals.indexWhere((g) => g.id == goal.id);
+      
+      if (index != -1) {
+        // Update in local storage first for immediate UI update
+        _savingsGoals[index] = goal;
+        await _updateSavingsGoalsStorage();
+        notifyListeners();
+        
+        // Then update in backend if it's not a local-only goal
+        if (!AppConfig.useMockData && !goal.id.startsWith('local_')) {
+          print('💰 Updating savings goal in backend: ${goal.title}');
+          
+          // Make sure we have a valid auth token before trying to update in backend
+          final prefs = await SharedPreferences.getInstance();
+          final token = prefs.getString('auth_token');
+          if (token == null || token.isEmpty) {
+            print('⚠️ No auth token found. Savings goal will only be updated locally.');
+            return;
+          }
+          
+          final updatedGoal = await SavingsGoalService.updateSavingsGoal(goal);
+          
+          if (updatedGoal != null) {
+            // Replace with the updated version from the server
+            _savingsGoals[index] = updatedGoal;
+            await _updateSavingsGoalsStorage();
+            notifyListeners();
+            print('✅ Savings goal updated in backend successfully: ${updatedGoal.id}');
+          } else {
+            print('❌ Failed to update savings goal in backend, but kept local changes');
+          }
+        }
+      } else {
+        print('⚠️ Savings goal not found in local storage: ${goal.id}');
+      }
+    } catch (e) {
+      print('❌ Error updating savings goal: $e');
+      // Keep the local changes even if backend update fails
     }
   }
 
   // Delete a savings goal
   Future<void> deleteSavingsGoal(String id) async {
-    _savingsGoals.removeWhere((g) => g.id == id);
-    await _updateSavingsGoalsStorage();
-    notifyListeners();
+    try {
+      print('🗑️ Deleting savings goal with ID: $id');
+      
+      // Remove from local storage first for immediate UI update
+      _savingsGoals.removeWhere((g) => g.id == id);
+      await _updateSavingsGoalsStorage();
+      notifyListeners();
+      
+      // Then delete from backend if it's not a local-only goal
+      if (!AppConfig.useMockData && !id.startsWith('local_')) {
+        // Make sure we have a valid auth token before trying to delete from backend
+        final prefs = await SharedPreferences.getInstance();
+        final token = prefs.getString('auth_token');
+        if (token == null || token.isEmpty) {
+          print('⚠️ No auth token found. Savings goal will only be deleted locally.');
+          return;
+        }
+        
+        final success = await SavingsGoalService.deleteSavingsGoal(id);
+        if (success) {
+          print('✅ Savings goal deleted from backend successfully: $id');
+        } else {
+          print('❌ Failed to delete savings goal from backend, but removed locally');
+        }
+      }
+    } catch (e) {
+      print('❌ Error deleting savings goal: $e');
+    }
   }
 
   // Add money to a savings goal
   Future<void> addToSavingsGoal(String goalId, double amount) async {
-    final index = _savingsGoals.indexWhere((g) => g.id == goalId);
-    if (index != -1) {
-      final goal = _savingsGoals[index];
-      final updatedGoal = goal.copyWith(
-        currentAmount: goal.currentAmount + amount,
-      );
-      _savingsGoals[index] = updatedGoal;
-
-      // Create a transaction for this savings contribution
-      final transaction = Transaction(
-        title: "Contribution to ${goal.title}",
-        amount: amount,
-        date: DateTime.now(),
-        category: TransactionCategory.other_expense,
-        type: TransactionType.expense,
-      );
-      await addTransaction(transaction);
-
-      await _updateSavingsGoalsStorage();
-      notifyListeners();
+    try {
+      print('💸 Adding $amount to savings goal with ID: $goalId');
+      
+      // Find the goal
+      final index = _savingsGoals.indexWhere((g) => g.id == goalId);
+      
+      if (index != -1) {
+        final goal = _savingsGoals[index];
+        
+        // Update locally first for immediate UI update
+        final updatedGoal = goal.copyWith(
+          currentAmount: goal.currentAmount + amount,
+        );
+        
+        _savingsGoals[index] = updatedGoal;
+        
+        // Create a transaction for this savings contribution
+        final transaction = Transaction(
+          title: "Contribution to ${goal.title}",
+          amount: amount,
+          date: DateTime.now(),
+          category: TransactionCategory.other_expense,
+          type: TransactionType.expense,
+        );
+        await addTransaction(transaction);
+        
+        await _updateSavingsGoalsStorage();
+        notifyListeners();
+        
+        // Then update on backend if it's not a local-only goal
+        if (!AppConfig.useMockData && !goalId.startsWith('local_')) {
+          // Make sure we have a valid auth token before trying to update in backend
+          final prefs = await SharedPreferences.getInstance();
+          final token = prefs.getString('auth_token');
+          if (token == null || token.isEmpty) {
+            print('⚠️ No auth token found. Contribution will only be saved locally.');
+            return;
+          }
+          
+          print('💰 Adding $amount to savings goal in backend: ${goal.title}');
+          final resultGoal = await SavingsGoalService.addMoneyToSavingsGoal(goalId, amount);
+          
+          if (resultGoal != null) {
+            // Replace with the updated version from the server
+            _savingsGoals[index] = resultGoal;
+            await _updateSavingsGoalsStorage();
+            notifyListeners();
+            print('✅ Money added to savings goal in backend successfully: ${resultGoal.id}');
+            print('💰 New amount: ${resultGoal.currentAmount} / ${resultGoal.targetAmount}');
+          } else {
+            print('❌ Failed to add money to savings goal in backend, but kept local changes');
+          }
+        }
+      } else {
+        print('⚠️ Savings goal not found in local storage: $goalId');
+      }
+    } catch (e) {
+      print('❌ Error adding money to savings goal: $e');
     }
   }
 
@@ -307,31 +605,37 @@ class FinanceService extends ChangeNotifier {
     return result;
   }
 
-  // Load all data from storage and backend
-  Future<void> _loadData() async {
+  // Load data from storage and backend - always use real data
+  Future<void> _loadData({bool forceRefresh = true}) async {
     final prefs = await SharedPreferences.getInstance();
 
-    // First load local transactions as a fallback
+    // Load transactions from local storage first
     final transactionsJson = prefs.getString('transactions');
     if (transactionsJson != null) {
       try {
         final List<dynamic> decodedList = jsonDecode(transactionsJson);
         _transactions = decodedList.map((item) => Transaction.fromJson(item)).toList();
-        print('💾 Loaded ${_transactions.length} transactions from local storage');
+        
+        // Count income and expense transactions for debugging
+        int localIncomeCount = _transactions.where((t) => t.type == TransactionType.income).length;
+        int localExpenseCount = _transactions.where((t) => t.type == TransactionType.expense).length;
+        
+        print('📱 Loaded ${_transactions.length} transactions from local storage');
+        print('📊 Local transaction breakdown - Income: $localIncomeCount, Expense: $localExpenseCount');
       } catch (e) {
         print('❌ Error parsing local transactions: $e');
         _transactions = [];
       }
     } else {
       _transactions = [];
-      await _updateTransactionsStorage();
     }
-    
-    // Then try to fetch from backend
-    if (!AppConfig.useMockData) {
+
+    // Then try to fetch from backend if not using mock data or if force refresh is requested
+    if (!AppConfig.useMockData || forceRefresh) {
+      print('🔄 Fetching transactions from backend (forceRefresh: $forceRefresh)');
       try {
-        // Check if user is authenticated
-        final token = prefs.getString('auth_token');
+        // Get auth token from AuthStateService for consistency
+        final token = await SharedPreferences.getInstance().then((prefs) => prefs.getString('auth_token'));
         if (token == null || token.isEmpty) {
           print('⚠️ No auth token found. User may not be logged in properly.');
           return;
@@ -343,6 +647,11 @@ class FinanceService extends ChangeNotifier {
         final backendTransactions = await TransactionService.getAllTransactions();
         
         if (backendTransactions.isNotEmpty) {
+          // Count income and expense transactions from backend for debugging
+          int backendIncomeCount = backendTransactions.where((t) => t.type == TransactionType.income).length;
+          int backendExpenseCount = backendTransactions.where((t) => t.type == TransactionType.expense).length;
+          print('📊 Backend transaction breakdown - Income: $backendIncomeCount, Expense: $backendExpenseCount');
+          
           // Merge backend transactions with local ones
           // Keep local transactions that aren't on the backend yet
           final localOnlyTransactions = _transactions
@@ -353,6 +662,11 @@ class FinanceService extends ChangeNotifier {
           
           // Replace all transactions with backend ones + local-only ones
           _transactions = [...backendTransactions, ...localOnlyTransactions];
+          
+          // Final count after merging
+          int finalIncomeCount = _transactions.where((t) => t.type == TransactionType.income).length;
+          int finalExpenseCount = _transactions.where((t) => t.type == TransactionType.expense).length;
+          print('📊 Final transaction breakdown - Income: $finalIncomeCount, Expense: $finalExpenseCount');
           
           // Update local storage with the merged list
           await _updateTransactionsStorage();
@@ -369,27 +683,100 @@ class FinanceService extends ChangeNotifier {
       }
     }
 
-    // Load budgets
+    // Load budgets from local storage first
     final budgetsJson = prefs.getString('budgets');
     if (budgetsJson != null) {
-      final List<dynamic> decodedList = jsonDecode(budgetsJson);
-      _budgets = decodedList.map((item) => Budget.fromJson(item)).toList();
+      try {
+        final List<dynamic> decodedList = jsonDecode(budgetsJson);
+        _budgets = decodedList.map((item) => Budget.fromJson(item)).toList();
+        print('📱 Loaded ${_budgets.length} budgets from local storage');
+      } catch (e) {
+        print('❌ Error parsing local budgets: $e');
+        _budgets = [];
+      }
     } else {
       // Start with empty budgets
       _budgets = [];
-      await _updateBudgetsStorage();
+    }
+    
+    // Then try to fetch budgets from backend if not using mock data or if force refresh is requested
+    if (!AppConfig.useMockData || forceRefresh) {
+      print('🔄 Fetching budgets from backend (forceRefresh: $forceRefresh)');
+      try {
+        final backendBudgets = await BudgetService.getAllBudgets();
+        
+        if (backendBudgets.isNotEmpty) {
+          // Merge backend budgets with local ones
+          // Keep local budgets that aren't on the backend yet
+          final localOnlyBudgets = _budgets
+              .where((b) => b.id.startsWith('local_'))
+              .toList();
+          
+          print('💾 Found ${localOnlyBudgets.length} local-only budgets to preserve');
+          
+          // Replace all budgets with backend ones + local-only ones
+          _budgets = [...backendBudgets, ...localOnlyBudgets];
+          
+          // Update local storage with the merged list
+          await _updateBudgetsStorage();
+          notifyListeners();
+          
+          print('✅ Loaded ${backendBudgets.length} budgets from backend');
+        } else {
+          print('⚠️ No budgets found on backend');
+        }
+      } catch (e) {
+        print('❌ Error fetching budgets from backend: $e');
+        // Continue with local budgets if backend fetch fails
+      }
     }
 
-    // Load savings goals
+    // Load savings goals from local storage first
     final savingsGoalsJson = prefs.getString('savingsGoals');
     if (savingsGoalsJson != null) {
-      final List<dynamic> decodedList = jsonDecode(savingsGoalsJson);
-      _savingsGoals =
-          decodedList.map((item) => SavingsGoal.fromJson(item)).toList();
+      try {
+        final List<dynamic> decodedList = jsonDecode(savingsGoalsJson);
+        _savingsGoals = decodedList.map((item) => SavingsGoal.fromJson(item)).toList();
+        print('📱 Loaded ${_savingsGoals.length} savings goals from local storage');
+      } catch (e) {
+        print('❌ Error parsing local savings goals: $e');
+        _savingsGoals = [];
+      }
     } else {
       // Start with empty savings goals
       _savingsGoals = [];
-      await _updateSavingsGoalsStorage();
+    }
+    
+    // Then try to fetch savings goals from backend if not using mock data or if force refresh is requested
+    if (!AppConfig.useMockData || forceRefresh) {
+      print('🔄 Fetching savings goals from backend (forceRefresh: $forceRefresh)');
+      try {
+        final backendSavingsGoals = await SavingsGoalService.getAllSavingsGoals();
+        
+        if (backendSavingsGoals.isNotEmpty) {
+          // Merge backend savings goals with local ones
+          // Keep local savings goals that aren't on the backend yet
+          final localOnlySavingsGoals = _savingsGoals
+              .where((g) => g.id.startsWith('local_'))
+              .toList();
+          
+          print('💾 Found ${localOnlySavingsGoals.length} local-only savings goals to preserve');
+          
+          // Replace all savings goals with backend ones + local-only ones
+          _savingsGoals = [...backendSavingsGoals, ...localOnlySavingsGoals];
+          
+          // Update local storage with the merged list
+          await _updateSavingsGoalsStorage();
+          notifyListeners();
+          
+          print('✅ Loaded ${backendSavingsGoals.length} savings goals from backend');
+        } else {
+          print('⚠️ No savings goals found on backend');
+        }
+      } catch (e) {
+        print('❌ Error fetching savings goals from backend: $e');
+        // Continue with local savings goals if backend fetch fails
+      }
     }
   }
 

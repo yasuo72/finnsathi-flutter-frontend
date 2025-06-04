@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../main.dart';
 
 class ThemeService extends ChangeNotifier {
   static const String _darkModeKey = 'dark_mode_enabled';
@@ -14,6 +16,7 @@ class ThemeService extends ChangeNotifier {
   // Initialize and load theme preference
   Future<void> init() async {
     await _loadThemePreference();
+    _applySystemUIOverlay();
   }
 
   // Load theme preference from shared preferences
@@ -31,6 +34,7 @@ class ThemeService extends ChangeNotifier {
   Future<void> toggleTheme() async {
     _isDarkMode = !_isDarkMode;
     await _saveThemePreference();
+    _applySystemUIOverlay();
     notifyListeners();
   }
 
@@ -39,7 +43,39 @@ class ThemeService extends ChangeNotifier {
     if (_isDarkMode != value) {
       _isDarkMode = value;
       await _saveThemePreference();
+      _applySystemUIOverlay();
       notifyListeners();
+    }
+  }
+
+  // Apply the correct system UI overlay style based on the current theme
+  void _applySystemUIOverlay() {
+    if (_isDarkMode) {
+      // Dark theme - dark navigation bar with light icons
+      SystemChrome.setSystemUIOverlayStyle(
+        const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+          systemNavigationBarColor: kDarkBackground,
+          systemNavigationBarDividerColor: Colors.transparent,
+          systemNavigationBarIconBrightness: Brightness.light,
+          systemNavigationBarContrastEnforced: false,
+        ),
+      );
+    } else {
+      // Light theme - light navigation bar with dark icons
+      SystemChrome.setSystemUIOverlayStyle(
+        const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: kLightBackground,
+          systemNavigationBarDividerColor: Colors.transparent,
+          systemNavigationBarIconBrightness: Brightness.dark,
+          systemNavigationBarContrastEnforced: false,
+        ),
+      );
     }
   }
 

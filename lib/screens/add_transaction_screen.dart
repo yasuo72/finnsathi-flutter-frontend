@@ -193,26 +193,14 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             await financeService.addToSavingsGoal(createdGoal.id, savingsAmount);
             
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Created new goal "${createdGoal.title}" and allocated ₹${savingsAmount.toStringAsFixed(2)}'),
-                  backgroundColor: Colors.teal,
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
+              // SnackBar removed
             }
           } else {
             // Regular existing goal
             await financeService.addToSavingsGoal(_selectedSavingsGoal!.id, savingsAmount);
             
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('₹${savingsAmount.toStringAsFixed(2)} allocated to ${_selectedSavingsGoal!.title}'),
-                  backgroundColor: Colors.blue,
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
+              // SnackBar removed
             }
           }
         }
@@ -221,26 +209,10 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       if (!mounted) return;
       Navigator.of(context).pop(true);
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            widget.transaction != null
-              ? 'Transaction updated successfully!'
-              : '${widget.type == TransactionType.income ? 'Income' : 'Expense'} added successfully!'
-          ),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      // SnackBar removed
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      // SnackBar removed
     } finally {
       if (mounted) {
         setState(() {

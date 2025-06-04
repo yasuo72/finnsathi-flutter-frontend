@@ -3,6 +3,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
+import 'dart:convert';
 import '../../../models/user_profile_model.dart';
 import '../../../services/profile_service.dart';
 
@@ -36,16 +37,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _phoneController = TextEditingController();
     
     // Get profile service after widget is built
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadProfile();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadProfile();
     });
   }
   
-  void _loadProfile() {
+  Future<UserProfile> _loadProfile() {
     _profileService = Provider.of<ProfileService>(context, listen: false);
     setState(() {
       _profileFuture = _profileService.getUserProfile();
     });
+    return _profileFuture;
   }
   
   @override
@@ -86,22 +88,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         avatarUrl: avatarUrl,
       );
       
-      final success = await _profileService.updateUserProfile(updatedProfile);
+      // updateUserProfile returns void, so we don't need to check its return value
+      await _profileService.updateUserProfile(updatedProfile);
       
-      if (success) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Profile updated successfully'),
-              backgroundColor: Colors.green,
-            ),
-          );
-          Navigator.pop(context, true); // Pass true to indicate profile was updated
-        }
-      } else {
-        setState(() {
-          _errorMessage = 'Failed to update profile. Please try again.';
-        });
+      // Assume success if no exception is thrown
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profile updated successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context, true); // Pass true to indicate profile was updated
       }
     } catch (e) {
       setState(() {
@@ -209,22 +207,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             width: 120,
                             height: 120,
                           )
-                        : Image.network(
-                            profile.avatarUrl,
-                            fit: BoxFit.cover,
-                            width: 120,
-                            height: 120,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: Colors.grey[300],
-                                child: const Icon(
-                                  Icons.person,
-                                  size: 60,
-                                  color: Colors.grey,
-                                ),
-                              );
-                            },
-                          ),
+                        : _buildProfileImage(profile.avatarUrl),
                   ),
                 ),
                 // Edit button
@@ -572,16 +555,45 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (pickedFile != null) {
         setState(() {
           _imageFile = File(pickedFile.path);
+          _isLoading = true;
         });
         
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Profile picture updated. Save to apply changes.'),
-            duration: Duration(seconds: 2),
-          ),
-        );
+        // Immediately upload the profile picture to update the UI
+        final uploadedUrl = await _profileService.uploadProfilePicture(pickedFile.path);
+        
+        if (uploadedUrl != null) {
+          // Force refresh the profile
+          await _loadProfile();
+          
+          // Force UI refresh throughout the app
+          _profileService.refreshProfile(); // This is a void function, no need to await
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Profile picture updated successfully'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to upload profile picture. Please try again.'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        
+        setState(() {
+          _isLoading = false;
+        });
       }
     } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error picking image: $e'),
@@ -601,6 +613,78 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       const SnackBar(
         content: Text('Profile picture removed. Save to apply changes.'),
         duration: Duration(seconds: 2),
+      ),
+    );
+  }
+  
+  // Helper method to build profile image based on URL type
+  Widget _buildProfileImage(String imageUrl) {
+    // Handle base64 encoded images
+    if (imageUrl.startsWith('data:image/')) {
+      try {
+        // Check if there's actual base64 data after the prefix
+        final parts = imageUrl.split(',');
+        if (parts.length < 2 || parts[1].isEmpty) {
+          debugPrint('Base64 image data is empty or invalid');
+          return _buildDefaultProfileImage();
+        }
+        
+        // Extract the base64 string (remove the data:image/jpeg;base64, part)
+        final base64String = parts[1];
+        final imageBytes = base64Decode(base64String);
+        
+        return Image.memory(
+          imageBytes,
+          fit: BoxFit.cover,
+          width: 120,
+          height: 120,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('Error loading base64 image: $error');
+            return _buildDefaultProfileImage();
+          },
+        );
+      } catch (e) {
+        debugPrint('Error decoding base64 image: $e');
+        return _buildDefaultProfileImage();
+      }
+    } 
+    // Handle file:// protocol
+    else if (imageUrl.startsWith('file://')) {
+      final filePath = imageUrl.replaceFirst('file://', '');
+      return Image.file(
+        File(filePath),
+        fit: BoxFit.cover,
+        width: 120,
+        height: 120,
+        errorBuilder: (context, error, stackTrace) {
+          debugPrint('Error loading file image: $error');
+          return _buildDefaultProfileImage();
+        },
+      );
+    } 
+    // Handle regular network images
+    else {
+      return Image.network(
+        imageUrl,
+        fit: BoxFit.cover,
+        width: 120,
+        height: 120,
+        errorBuilder: (context, error, stackTrace) {
+          debugPrint('Error loading network image: $error');
+          return _buildDefaultProfileImage();
+        },
+      );
+    }
+  }
+  
+  // Default profile image placeholder
+  Widget _buildDefaultProfileImage() {
+    return Container(
+      color: Colors.grey[300],
+      child: const Icon(
+        Icons.person,
+        size: 60,
+        color: Colors.grey,
       ),
     );
   }

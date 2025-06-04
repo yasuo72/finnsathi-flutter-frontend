@@ -77,7 +77,7 @@ class AppConfig {
     }
 
     // Use Railway backend URL
-    return 'https://finnsathi-ai-expense-monitor-production.up.railway.app';
+    return 'https://finnsathi-ai-expense-monitor-backend-production.up.railway.app';
 
     // Fallback to local development URLs if Railway is not available
     // if (Platform.isAndroid) {

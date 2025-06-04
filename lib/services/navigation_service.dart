@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 /// A service that handles navigation throughout the app
 /// This allows for navigation without context in services and other non-widget classes
-class NavigationService {
+class NavigationService extends ChangeNotifier {
   static final NavigationService _instance = NavigationService._internal();
   
   factory NavigationService() => _instance;

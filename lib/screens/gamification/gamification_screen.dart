@@ -21,7 +21,8 @@ class GamificationScreen extends StatefulWidget {
   State<GamificationScreen> createState() => _GamificationScreenState();
 }
 
-class _GamificationScreenState extends State<GamificationScreen> with SingleTickerProviderStateMixin {
+class _GamificationScreenState extends State<GamificationScreen>
+    with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late ProfileService _profileService;
   bool _isLoading = true;
@@ -60,9 +61,12 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
 
     try {
       // Record activity in gamification service to update streak
-      final gamificationService = Provider.of<GamificationService>(context, listen: false);
+      final gamificationService = Provider.of<GamificationService>(
+        context,
+        listen: false,
+      );
       await gamificationService.recordActivity();
-      
+
       setState(() {
         _isLoading = false;
       });
@@ -73,9 +77,9 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
         _hasError = true;
         _errorMessage = e.toString();
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading data: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error loading data: $e')));
     }
   }
 
@@ -100,10 +104,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                theme.primaryColor,
-                theme.primaryColor.withOpacity(0.8),
-              ],
+              colors: [theme.primaryColor, theme.primaryColor.withOpacity(0.8)],
             ),
           ),
         ),
@@ -113,9 +114,10 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
           statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
         ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _hasError
+      body:
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _hasError
               ? _buildErrorWidget()
               : _buildContent(context),
     );
@@ -148,7 +150,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
 
   Widget _buildUserLevelSection() {
     final profile = _profileService.currentProfile;
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -216,10 +218,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
           Text(
             'Create a savings goal to start a new challenge',
             textAlign: TextAlign.center,
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
+            style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600]),
           ),
         ],
       ),
@@ -229,7 +228,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
   Widget _buildChallengesSection() {
     final financeService = Provider.of<FinanceService>(context, listen: false);
     final savingsGoals = financeService.savingsGoals;
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -243,16 +242,20 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
         ),
         const SizedBox(height: 16),
         savingsGoals.isEmpty
-          ? _buildNoSavingsGoalsMessage()
-          : Column(
+            ? _buildNoSavingsGoalsMessage()
+            : Column(
               children: [
                 ...savingsGoals.take(2).map((goal) {
                   // Calculate days left based on target date
                   final now = DateTime.now();
-                  final daysLeft = goal.targetDate != null 
-                      ? goal.targetDate!.difference(now).inDays.clamp(0, 999)
-                      : 30; // Default to 30 days if no target date
-                      
+                  final daysLeft =
+                      goal.targetDate != null
+                          ? goal.targetDate!
+                              .difference(now)
+                              .inDays
+                              .clamp(0, 999)
+                          : 30; // Default to 30 days if no target date
+
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 16),
                     child: SavingsChallengeCard(
@@ -272,7 +275,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
 
   Widget _buildAchievementsSection() {
     final profile = _profileService.currentProfile;
-    
+
     // Safety check to ensure profile and achievements are available
     if (profile.achievements.isEmpty) {
       return Column(
@@ -291,9 +294,10 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
             width: double.infinity,
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: Theme.of(context).brightness == Brightness.dark 
-                  ? Colors.grey[850] 
-                  : Colors.white,
+              color:
+                  Theme.of(context).brightness == Brightness.dark
+                      ? Colors.grey[850]
+                      : Colors.white,
               borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
@@ -333,7 +337,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
         ],
       );
     }
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -355,7 +359,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
             itemBuilder: (context, index) {
               final achievement = profile.achievements[index];
               final delay = index * 0.2;
-              
+
               return AchievementCard(
                 achievement: achievement,
                 animationController: _animationController,
@@ -367,7 +371,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
       ],
     );
   }
-  
+
   Widget _buildErrorWidget() {
     return Center(
       child: Padding(
@@ -375,11 +379,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.error_outline,
-              size: 80,
-              color: Colors.red[300],
-            ),
+            Icon(Icons.error_outline, size: 80, color: Colors.red[300]),
             const SizedBox(height: 16),
             Text(
               'Something went wrong',
@@ -390,14 +390,11 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
             ),
             const SizedBox(height: 8),
             Text(
-              _errorMessage.isNotEmpty 
-                  ? 'Error: $_errorMessage' 
+              _errorMessage.isNotEmpty
+                  ? 'Error: $_errorMessage'
                   : 'There was an error loading the gamification data',
               textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(
-                fontSize: 16,
-                color: Colors.grey[600],
-              ),
+              style: GoogleFonts.poppins(fontSize: 16, color: Colors.grey[600]),
             ),
             const SizedBox(height: 24),
             ElevatedButton(
@@ -423,9 +420,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
           ),
         ),
         const SizedBox(height: 16),
-        DailyChallengesCard(
-          animationController: _animationController,
-        ),
+        DailyChallengesCard(animationController: _animationController),
       ],
     );
   }
@@ -443,9 +438,7 @@ class _GamificationScreenState extends State<GamificationScreen> with SingleTick
           ),
         ),
         const SizedBox(height: 16),
-        FinancialHealthScoreCard(
-          animationController: _animationController,
-        ),
+        FinancialHealthScoreCard(animationController: _animationController),
       ],
     );
   }
